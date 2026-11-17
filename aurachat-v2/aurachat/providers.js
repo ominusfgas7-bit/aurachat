@@ -255,7 +255,7 @@ async function fetchJson(url, headers) {
 
 async function listModels(force = false) {
   const c = getCfg();
-  const key = JSON.stringify([c.anthropicKey && 1, c.openrouterKey && 1, c.customBase, c.customKey && 1]);
+  const key = JSON.stringify([c.anthropicKey && 1, c.openrouterKey && 1, c.customBase, c.customKey && 1, c.customExtra]);
   if (!force && cache.key === key && Date.now() - cache.at < 10 * 60 * 1000 && cache.models.length) return cache.models;
   const out = [];
 
@@ -281,6 +281,8 @@ async function listModels(force = false) {
       ids = raw.map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean);
     } catch {}
     if (!ids.length) ids = FALLBACK_CLAUDE;
+    const extra = String(c.customExtra || '').split(/[\s,]+/).filter(Boolean);
+    ids = [...extra, ...ids.filter((i) => !extra.includes(i))];
     for (const id of ids) out.push({ id: `custom:${id}`, name: nice(id), provider: 'Gateway', desc: descOf(id) || 'From your gateway' });
   }
 

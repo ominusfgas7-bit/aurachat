@@ -650,7 +650,7 @@ function fillSettings() {
   const p = st.config.providers || {};
   const stateOf = (x) => (x?.set ? `<span class="text-emerald-600 dark:text-emerald-400">● saved ${esc(x.hint)}</span>` : '<span class="text-claude-mutedLight dark:text-claude-mutedDark">○ not set</span>');
   $('#prov-custom-state').innerHTML = stateOf(p.custom); $('#prov-anthropic-state').innerHTML = stateOf(p.anthropic); $('#prov-openrouter-state').innerHTML = stateOf(p.openrouter);
-  $('#set-custom-base').value = p.custom?.baseUrl || ''; $('#set-custom-mode').value = p.custom?.mode || 'auto';
+  $('#set-custom-base').value = p.custom?.baseUrl || ''; $('#set-custom-mode').value = p.custom?.mode || 'auto'; $('#set-custom-extra').value = p.custom?.extra || '';
   for (const [id, x] of [['set-custom-key', p.custom], ['set-anthropic-key', p.anthropic], ['set-openrouter-key', p.openrouter]]) { const el = $('#' + id); el.value = ''; el.type = 'password'; el.placeholder = x?.set ? `Saved (${x.hint}). Type to replace` : el.dataset.ph || el.placeholder; }
   $('#set-display-name').value = st.config.displayName || ''; $('#set-system-prompt').value = st.config.systemPrompt || '';
   const sel = $('#set-default-model'); let last = '', h = '<option value="">Automatic (Claude Sonnet 4.5 if available)</option>';
@@ -669,7 +669,7 @@ function applyIdentity() {
 async function saveSettings(silent) {
   const body = {
     displayName: $('#set-display-name').value, systemPrompt: $('#set-system-prompt').value, defaultModel: $('#set-default-model').value,
-    customBaseUrl: $('#set-custom-base').value, customMode: $('#set-custom-mode').value,
+    customBaseUrl: $('#set-custom-base').value, customMode: $('#set-custom-mode').value, customExtra: $('#set-custom-extra').value,
     customKey: $('#set-custom-key').value, anthropicKey: $('#set-anthropic-key').value, openrouterKey: $('#set-openrouter-key').value,
   };
   st.opts.maxTokens = +$('#set-max-tokens').value; saveOpts();

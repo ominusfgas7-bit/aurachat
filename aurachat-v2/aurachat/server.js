@@ -36,14 +36,17 @@ if (!SESSION_SECRET) {
 
 // ---------- provider config: settings (set in the web UI) first, .env as fallback ----------
 const sget = (k) => getSetting(k, '');
+// "__none__" = key removed in the UI on purpose, so it also overrides a key left in .env
+const pick = (k, envVal) => { const v = sget(k); return v === '__none__' ? '' : v || envVal || ''; };
 const cfg = () => ({
-  anthropicKey: sget('anthropic_key') || process.env.ANTHROPIC_API_KEY || '',
+  anthropicKey: pick('anthropic_key', process.env.ANTHROPIC_API_KEY),
   anthropicBase: sget('anthropic_base') || process.env.ANTHROPIC_BASE_URL || '',
-  openrouterKey: sget('openrouter_key') || process.env.OPENROUTER_API_KEY || '',
+  openrouterKey: pick('openrouter_key', process.env.OPENROUTER_API_KEY),
   openrouterBase: sget('openrouter_base') || process.env.OPENROUTER_BASE_URL || '',
   customBase: sget('custom_base') || process.env.CUSTOM_BASE_URL || '',
-  customKey: sget('custom_key') || process.env.CUSTOM_API_KEY || '',
+  customKey: pick('custom_key', process.env.CUSTOM_API_KEY),
   customMode: sget('custom_mode') || process.env.CUSTOM_MODE || 'auto',
+  customExtra: sget('custom_extra') || process.env.CUSTOM_EXTRA_MODELS || '',
 });
 setConfigSource(cfg);
 const hint = (k) => (k ? (k.length > 14 ? `${k.slice(0, 6)}…${k.slice(-4)}` : '••••') : '');
@@ -143,7 +146,7 @@ app.get('/api/config', (req, res) => {
     providers: {
       anthropic: { set: !!c.anthropicKey, hint: hint(c.anthropicKey) },
       openrouter: { set: !!c.openrouterKey, hint: hint(c.openrouterKey) },
-      custom: { set: !!c.customKey, hint: hint(c.customKey), baseUrl: c.customBase, mode: c.customMode },
+      custom: { set: !!c.customKey, hint: hint(c.customKey), baseUrl: c.customBase, mode: c.customMode, extra: c.customExtra },
     },
   });
 });
@@ -159,12 +162,13 @@ app.put('/api/config', (req, res) => {
   // secrets: empty string = leave unchanged, "__clear__" = remove
   for (const [field, key] of [['anthropicKey', 'anthropic_key'], ['openrouterKey', 'openrouter_key'], ['customKey', 'custom_key']]) {
     const v = str(field, 400);
-    if (v === '__clear__') setSetting(key, '');
+    if (v === '__clear__') setSetting(key, '__none__');
     else if (v) setSetting(key, v);
   }
   put('custom_base', str('customBaseUrl', 300));
   const mode = str('customMode', 30);
   if (['auto', 'openai', 'anthropic', 'anthropic-bearer'].includes(mode)) setSetting('custom_mode', mode);
+  if (typeof b.customExtra === 'string') setSetting('custom_extra', b.customExtra.slice(0, 2000));
   clearModelCache();
   res.json({ ok: true });
 });
