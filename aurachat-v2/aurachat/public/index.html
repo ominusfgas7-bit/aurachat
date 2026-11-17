@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FAF9F5" />
+  <title>AuraChat</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" defer></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" defer></script>
+
+  <script>
+    // apply saved theme before paint (no flash)
+    try {
+      const t = localStorage.getItem('aura_theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.className = t;
+    } catch (e) {}
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: {
+        fontFamily: { serif: ['Newsreader', 'Georgia', 'serif'], sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+        colors: { claude: {
+          bgLight: '#FAF9F5', sidebarLight: '#F4F3EE', cardLight: '#F0EFEA', surfaceLight: '#FFFFFF', borderLight: '#E5E4DF', textLight: '#141413', mutedLight: '#6B6A65',
+          bgDark: '#1A1918', sidebarDark: '#141312', cardDark: '#242321', bubbleDark: '#262523', borderDark: '#33322F', textDark: '#ECEBE6', mutedDark: '#9C9A93',
+          accent: '#D97757', accentHover: '#AE5630',
+        } },
+      } },
+    };
+  </script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(130,125,115,.24); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(130,125,115,.42); }
+    html, body { height: 100%; }
+    body { height: 100dvh; }
+    .markdown-body { line-height: 1.72; font-size: .975rem; word-wrap: break-word; overflow-wrap: anywhere; }
+    .markdown-body p { margin-bottom: .95rem; } .markdown-body p:last-child { margin-bottom: 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { font-family: 'Newsreader', Georgia, serif; font-weight: 500; margin-top: 1.45rem; margin-bottom: .6rem; line-height: 1.28; letter-spacing: -.01em; }
+    .markdown-body h1 { font-size: 1.7rem; } .markdown-body h2 { font-size: 1.4rem; } .markdown-body h3 { font-size: 1.18rem; }
+    .markdown-body ul, .markdown-body ol { margin-left: 1.4rem; margin-bottom: .95rem; }
+    .markdown-body ul { list-style-type: disc; } .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin-bottom: .32rem; }
+    .markdown-body blockquote { border-left: 3px solid #D97757; padding-left: 1rem; margin: 1rem 0; font-style: italic; opacity: .9; }
+    .markdown-body hr { border: 0; border-top: 1px solid rgba(130,125,115,.3); margin: 1.4rem 0; }
+    .markdown-body code:not(pre code) { font-family: 'JetBrains Mono', monospace; font-size: .84em; padding: .15rem .4rem; border-radius: .375rem; background: rgba(217,119,87,.12); color: #D97757; }
+    .dark .markdown-body code:not(pre code) { background: rgba(217,119,87,.18); color: #E8957A; }
+    .markdown-body pre { background: #1C1B1A; color: #e8e6e1; border-radius: .85rem; padding: 1rem; overflow-x: auto; margin: 1rem 0; font-family: 'JetBrains Mono', monospace; font-size: .84rem; line-height: 1.55; }
+    .codewrap pre { padding: 0; margin: 0; border-radius: 0; background: transparent; }
+    .codewrap { margin: 1rem 0; border-radius: .85rem; overflow: hidden; background: #1C1B1A; border: 1px solid rgba(255,255,255,.08); }
+    .codehead { display: flex; justify-content: space-between; align-items: center; padding: .35rem .75rem; font: 500 11px 'JetBrains Mono', monospace; color: #9C9A93; background: #242321; }
+    .codehead button { background: none; border: 0; color: #9C9A93; font: inherit; cursor: pointer; }
+    .codehead button:hover { color: #fff; }
+    .codewrap pre { margin: 0; overflow-x: auto; }
+    .codewrap pre code { display: block; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: .84rem; line-height: 1.55; background: transparent !important; }
+    .markdown-body table { display: block; overflow-x: auto; border-collapse: collapse; margin: 1rem 0; font-size: .88rem; }
+    .markdown-body th, .markdown-body td { border: 1px solid rgba(130,125,115,.25); padding: .5rem .75rem; text-align: left; }
+    .markdown-body th { background: rgba(130,125,115,.08); font-weight: 600; }
+    .markdown-body a { color: #D97757; text-decoration: underline; text-underline-offset: 2px; }
+    .streaming-cursor::after { content: '●'; color: #D97757; margin-left: 5px; font-size: .85em; animation: pulseCursor .9s infinite ease-in-out; }
+    @keyframes pulseCursor { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+    .spin-slow { animation: spinSlow 6s linear infinite; } @keyframes spinSlow { to { transform: rotate(360deg); } }
+    .modal-backdrop { animation: fadeIn .15s ease-out; } @keyframes fadeIn { from { opacity: 0; } }
+    .artifact-card { display: flex; align-items: center; gap: .75rem; width: 100%; text-align: left; margin: 1rem 0; padding: .7rem .9rem; border-radius: .9rem; border: 1px solid rgba(130,125,115,.3); transition: border-color .15s, background .15s; }
+    .artifact-card:hover { border-color: #D97757; background: rgba(217,119,87,.06); }
+    .sb-collapsed #sidebar { display: none; }
+    #open-sidebar { display: none; } .sb-collapsed #open-sidebar { display: flex; }
+    @media (max-width: 767px) { #open-sidebar { display: flex; } .sb-collapsed #sidebar { display: flex; } }
+    svg.ic { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .seg button.on { background: #D97757; color: #fff; }
+    input[type=range] { accent-color: #D97757; }
+    textarea, input, select, button { font-family: inherit; }
+    .safe-b { padding-bottom: max(.875rem, env(safe-area-inset-bottom)); }
+  </style>
+</head>
+<body class="bg-claude-bgLight text-claude-textLight dark:bg-claude-bgDark dark:text-claude-textDark font-sans antialiased selection:bg-claude-accent/20 overflow-hidden flex">
+
+  <div id="toast-container" class="fixed bottom-5 right-5 z-[90] flex flex-col gap-2 pointer-events-none"></div>
+  <div id="mobile-sidebar-backdrop" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/40 z-30 hidden md:hidden backdrop-blur-[1px]"></div>
+
+  <!-- LOGIN -->
+  <div id="login" class="hidden fixed inset-0 z-[80] bg-claude-bgLight dark:bg-claude-bgDark flex items-center justify-center p-6">
+    <form id="loginForm" class="w-full max-w-[340px] flex flex-col gap-3 text-center">
+      <div class="text-claude-accent text-4xl"><span data-i="logo" class="inline-block w-10 h-10"></span></div>
+      <h1 class="font-serif text-3xl font-normal mb-2">AuraChat</h1>
+      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" class="px-4 py-3 rounded-xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent text-[15px]">
+      <button class="py-3 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white font-semibold transition" type="submit">Sign in</button>
+      <div id="loginErr" class="text-red-600 text-sm min-h-[1.25rem]"></div>
+    </form>
+  </div>
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 z-40 w-[260px] bg-claude-sidebarLight dark:bg-claude-sidebarDark border-r border-claude-borderLight dark:border-claude-borderDark flex flex-col transition-transform duration-200 transform -translate-x-full md:translate-x-0 shrink-0">
+    <div class="h-14 px-3.5 flex items-center justify-between shrink-0">
+      <button onclick="createNewChat()" class="flex items-center gap-2 text-left group">
+        <span data-i="logo" class="w-5 h-5 text-claude-accent transition-transform duration-300 group-hover:rotate-90"></span>
+        <span class="font-serif text-[22px] font-medium tracking-tight" id="brand-name">AuraChat</span>
+      </button>
+      <button onclick="toggleSidebar()" title="Collapse sidebar" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5 transition"><span data-i="panel" class="block w-4 h-4"></span></button>
+    </div>
+
+    <div class="px-2.5 space-y-0.5 mb-3">
+      <button onclick="createNewChat()" class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/[0.05] text-[13.5px] font-medium transition active:scale-[0.99] group">
+        <span class="w-5 h-5 rounded-full bg-claude-accent group-hover:bg-claude-accentHover text-white flex items-center justify-center text-xs font-bold transition">+</span>
+        <span class="text-claude-accent font-semibold">New chat</span>
+      </button>
+      <button onclick="focusChatSearch()" class="nav-btn w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-[13px] font-medium text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark hover:bg-black/[0.04] dark:hover:bg-white/[0.05] transition">
+        <span data-i="chat" class="w-4 h-4"></span><span>Chats</span>
+      </button>
+      <button onclick="openSkillsModal('skills')" class="nav-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[13px] font-medium text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark hover:bg-black/[0.04] dark:hover:bg-white/[0.05] transition">
+        <span class="flex items-center gap-2.5"><span data-i="sparkle" class="w-4 h-4"></span><span>Skills &amp; Memo</span></span>
+        <span id="sidebar-memo-badge" class="text-[10.5px] px-1.5 rounded-full bg-claude-accent/15 text-claude-accent font-semibold">0</span>
+      </button>
+      <button onclick="toggleArtifactsPanel()" class="nav-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[13px] font-medium text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark hover:bg-black/[0.04] dark:hover:bg-white/[0.05] transition">
+        <span class="flex items-center gap-2.5"><span data-i="code" class="w-4 h-4"></span><span>Artifacts</span></span>
+        <span id="sidebar-artifact-badge" class="hidden text-[10px] px-1.5 rounded bg-claude-accent/15 text-claude-accent font-mono">0</span>
+      </button>
+    </div>
+
+    <div class="px-2.5 mb-2">
+      <div class="relative">
+        <span data-i="search" class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-claude-mutedLight dark:text-claude-mutedDark"></span>
+        <input id="chat-search-input" type="text" placeholder="Search chats..." class="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg bg-black/[0.035] dark:bg-white/[0.04] border border-transparent focus:border-claude-borderLight dark:focus:border-claude-borderDark focus:bg-claude-surfaceLight dark:focus:bg-claude-cardDark outline-none transition placeholder:text-claude-mutedLight dark:placeholder:text-claude-mutedDark">
+      </div>
+    </div>
+
+    <div id="chat-history-list" class="flex-1 overflow-y-auto px-2 space-y-3 pb-3"></div>
+
+    <div class="relative p-2.5 border-t border-claude-borderLight dark:border-claude-borderDark" id="profile-menu-wrapper">
+      <div id="profile-popover-menu" class="hidden absolute bottom-full left-2.5 right-2.5 mb-2 rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-2xl p-1.5 z-50 text-xs">
+        <div class="px-3 py-2 border-b border-claude-borderLight dark:border-claude-borderDark mb-1">
+          <div class="font-semibold pop-name">You</div>
+          <div id="popover-api-status" class="text-[11px] flex items-center gap-1.5 mt-0.5"></div>
+        </div>
+        <button onclick="closeProfilePopover(); openSettingsModal('providers')" class="pop-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition text-left"><span data-i="key" class="w-3.5 h-3.5 text-claude-mutedLight dark:text-claude-mutedDark"></span><span>Settings &amp; API keys</span></button>
+        <button onclick="closeProfilePopover(); openSkillsModal('memo')" class="pop-item w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition text-left"><span class="flex items-center gap-2.5"><span data-i="note" class="w-3.5 h-3.5 text-claude-mutedLight dark:text-claude-mutedDark"></span><span>Memo (Memory)</span></span><span id="popover-memo-count" class="text-[10px] px-1.5 rounded bg-claude-accent/15 text-claude-accent font-mono">0</span></button>
+        <button onclick="closeProfilePopover(); openSkillsModal('skills')" class="pop-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition text-left"><span data-i="sparkle" class="w-3.5 h-3.5 text-claude-mutedLight dark:text-claude-mutedDark"></span><span>Skills &amp; Personas</span></button>
+        <div class="my-1 border-t border-claude-borderLight dark:border-claude-borderDark"></div>
+        <button onclick="toggleTheme()" class="pop-item w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition text-left"><span class="flex items-center gap-2.5"><span data-i="moon" class="w-3.5 h-3.5 text-claude-mutedLight dark:text-claude-mutedDark"></span><span id="theme-menu-label">Dark mode</span></span></button>
+        <button onclick="logout()" class="pop-item w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition text-left"><span data-i="logout" class="w-3.5 h-3.5 text-claude-mutedLight dark:text-claude-mutedDark"></span><span>Log out</span></button>
+      </div>
+      <button onclick="toggleProfilePopover()" class="w-full flex items-center justify-between px-2 py-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/[0.05] transition group">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div id="avatar" class="w-7 h-7 rounded-full bg-claude-textLight dark:bg-claude-textDark text-claude-bgLight dark:text-claude-bgDark flex items-center justify-center text-xs font-semibold shrink-0">?</div>
+          <div class="text-left min-w-0">
+            <div class="text-xs font-medium truncate pop-name">You</div>
+            <div class="flex items-center gap-1.5 text-[10.5px] text-claude-mutedLight dark:text-claude-mutedDark"><span id="api-status-dot" class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span><span id="api-status-label" class="truncate">Add API key</span></div>
+          </div>
+        </div>
+        <span data-i="updown" class="w-4 h-4 text-claude-mutedLight dark:text-claude-mutedDark shrink-0"></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- MAIN + ARTIFACTS -->
+  <div class="flex-1 flex h-full min-w-0 overflow-hidden">
+    <main id="main-stage" class="flex-1 flex flex-col h-full min-w-0 relative">
+      <header class="h-13 py-2.5 px-3 sm:px-4 flex items-center justify-between shrink-0 z-20 gap-2">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <button id="open-sidebar" onclick="toggleSidebar(true)" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5 transition items-center"><span data-i="panel" class="block w-5 h-5"></span></button>
+          <button id="header-chat-title-btn" onclick="renameActiveChat()" class="hidden items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-sm font-medium truncate max-w-[200px] sm:max-w-[380px] transition" title="Rename chat">
+            <span id="header-chat-title" class="truncate">New chat</span><span data-i="chev" class="w-3 h-3 text-claude-mutedLight dark:text-claude-mutedDark shrink-0"></span>
+          </button>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button onclick="openSettingsModal('providers')" id="header-api-pill" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-claude-sidebarLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark hover:border-claude-accent transition">
+            <span id="header-api-dot" class="w-1.5 h-1.5 rounded-full bg-amber-500"></span><span id="header-api-text">No API key</span>
+          </button>
+          <button onclick="openPromptInspector()" class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-claude-sidebarLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark hover:border-claude-accent transition" title="Inspect the system prompt">
+            <span id="active-system-summary" class="truncate max-w-[160px]">Memo · Default</span>
+          </button>
+          <button onclick="toggleArtifactsPanel()" id="header-artifacts-btn" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-claude-borderLight dark:border-claude-borderDark hover:border-claude-accent bg-claude-surfaceLight/60 dark:bg-claude-cardDark/60 transition" title="Artifacts">
+            <span data-i="code" class="w-3.5 h-3.5 text-claude-accent"></span><span class="hidden sm:inline">Artifacts</span>
+          </button>
+        </div>
+      </header>
+
+      <div id="messages-scroll-area" class="flex-1 overflow-y-auto px-4 sm:px-6 flex flex-col">
+        <div id="welcome-screen" class="my-auto w-full max-w-[720px] mx-auto py-8 flex flex-col items-center">
+          <div class="flex items-center justify-center gap-3.5 mb-7">
+            <span data-i="logo" class="w-9 h-9 text-claude-accent shrink-0"></span>
+            <h1 id="welcome-greeting" class="font-serif text-3xl sm:text-[2.5rem] leading-tight font-normal tracking-tight text-center">How can I help you today?</h1>
+          </div>
+          <div id="welcome-composer-slot" class="w-full mb-4"></div>
+          <div class="flex flex-wrap items-center justify-center gap-2 mt-1" id="starter-pills"></div>
+        </div>
+        <div id="messages-container" class="w-full max-w-[720px] mx-auto py-6 space-y-7 hidden"></div>
+      </div>
+
+      <div id="bottom-composer-dock" class="hidden px-3 sm:px-6 safe-b pt-2 bg-gradient-to-t from-claude-bgLight via-claude-bgLight to-transparent dark:from-claude-bgDark dark:via-claude-bgDark shrink-0">
+        <div id="bottom-composer-slot" class="w-full max-w-[720px] mx-auto"></div>
+        <div class="text-center mt-1.5 text-[11px] text-claude-mutedLight dark:text-claude-mutedDark">AI can make mistakes. Please double-check responses.</div>
+      </div>
+
+      <!-- COMPOSER (moves between the welcome slot and the bottom dock) -->
+      <div id="claude-composer-card" class="rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-[0_2px_12px_rgba(20,20,19,0.04)] dark:shadow-[0_2px_14px_rgba(0,0,0,0.28)] focus-within:border-claude-accent/75 transition-all">
+        <div id="attachments-preview-bar" class="hidden px-3.5 pt-3 flex flex-wrap gap-2"></div>
+        <textarea id="prompt-input" rows="2" placeholder="How can I help you today?" class="w-full px-4 pt-3.5 pb-2 bg-transparent resize-none outline-none text-[15px] leading-relaxed max-h-56 placeholder:text-claude-mutedLight dark:placeholder:text-claude-mutedDark"></textarea>
+
+        <div class="px-3 pb-2.5 pt-1 flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <!-- (+) menu -->
+            <div class="relative" id="plus-wrapper">
+              <button onclick="togglePop('plus-menu')" class="w-8 h-8 rounded-xl border border-claude-borderLight dark:border-claude-borderDark hover:bg-black/[0.04] dark:hover:bg-white/[0.05] flex items-center justify-center text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark transition" title="Add files, search, style"><span data-i="plus" class="w-4 h-4"></span></button>
+              <div id="plus-menu" class="pop hidden absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-2xl p-2 z-50 text-xs">
+                <label class="flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer">
+                  <span data-i="clip" class="w-4 h-4 text-claude-mutedLight dark:text-claude-mutedDark"></span><span class="font-medium">Add files or photos</span>
+                  <input id="file-upload-input" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.js,.ts,.tsx,.jsx,.py,.json,.html,.css,.sql,.csv,.yaml,.yml,.sh,.log,.xml,.java,.c,.cpp,.go,.rs,.php,.env,.conf,.ini,.toml" class="hidden">
+                </label>
+                <div class="flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5">
+                  <span class="flex items-center gap-2.5"><span data-i="globe" class="w-4 h-4 text-claude-mutedLight dark:text-claude-mutedDark"></span><span class="font-medium">Web search</span></span>
+                  <label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="opt-websearch" class="sr-only peer"><span class="w-9 h-5 rounded-full bg-claude-borderLight dark:bg-claude-borderDark peer-checked:bg-claude-accent transition relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span></label>
+                </div>
+                <div class="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark">Response style</div>
+                <div id="style-options" class="px-1 pb-1 grid grid-cols-3 gap-1"></div>
+                <div class="px-2.5 pt-2 pb-1 flex justify-between text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark"><span>Temperature</span><span id="opt-temp-label" class="font-mono normal-case">1.0</span></div>
+                <div class="px-2.5 pb-2"><input id="opt-temp" type="range" min="0" max="1" step="0.1" value="1" class="w-full"><div class="text-[10px] text-claude-mutedLight dark:text-claude-mutedDark mt-0.5">Ignored while extended thinking is on.</div></div>
+              </div>
+            </div>
+
+            <!-- skills pill -->
+            <div class="relative" id="skill-dropdown-wrapper">
+              <button onclick="togglePop('skill-dropdown-menu')" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-claude-sidebarLight/85 dark:bg-white/[0.04] hover:bg-black/[0.05] dark:hover:bg-white/[0.08] border border-claude-borderLight dark:border-claude-borderDark transition" title="Switch skill">
+                <span id="composer-skill-icon" class="text-claude-accent">✦</span><span id="composer-skill-name" class="font-medium max-w-[110px] truncate">Default</span><span data-i="chev" class="w-3 h-3 text-claude-mutedLight dark:text-claude-mutedDark"></span>
+              </button>
+              <div id="skill-dropdown-menu" class="pop hidden absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-2xl p-2 z-50">
+                <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark flex justify-between items-center">
+                  <span>Skills (★ = default)</span>
+                  <button onclick="closePops(); openSkillsModal('skills')" class="text-claude-accent hover:underline normal-case font-semibold">Manage</button>
+                </div>
+                <div id="composer-skill-options" class="space-y-0.5 max-h-60 overflow-y-auto mt-1"></div>
+              </div>
+            </div>
+
+            <!-- thinking pill -->
+            <div class="relative" id="thinking-wrapper">
+              <button id="thinking-toggle-btn" onclick="togglePop('thinking-menu')" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border border-claude-borderLight dark:border-claude-borderDark text-claude-mutedLight dark:text-claude-mutedDark hover:border-claude-accent/60 transition" title="Extended thinking">
+                <span data-i="clock" class="w-3.5 h-3.5"></span><span class="hidden sm:inline">Extended thinking</span><span id="thinking-status-text" class="text-[10px] font-mono">Off</span>
+              </button>
+              <div id="thinking-menu" class="pop hidden absolute left-0 bottom-full mb-2 w-72 rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-2xl p-3 z-50 text-xs">
+                <div class="font-semibold mb-2">Extended thinking effort</div>
+                <div class="seg flex rounded-lg overflow-hidden border border-claude-borderLight dark:border-claude-borderDark" id="effort-seg"></div>
+                <p class="text-[11px] text-claude-mutedLight dark:text-claude-mutedDark mt-2">Higher effort lets the model reason longer before it answers: slower and more tokens. Works with Claude models; some other models support it too.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="relative min-w-0" id="model-dropdown-wrapper">
+              <button onclick="toggleModelDropdown()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/[0.06] text-xs font-medium text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark transition max-w-[160px] sm:max-w-[240px]">
+                <span id="selected-model-label" class="font-medium text-claude-textLight dark:text-claude-textDark truncate">Model</span><span data-i="chev" class="w-3.5 h-3.5 shrink-0"></span>
+              </button>
+              <div id="model-dropdown-menu" class="pop hidden absolute right-0 bottom-full mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-2xl p-2 z-50">
+                <div class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark flex items-center justify-between">
+                  <span>Select model</span><button onclick="refreshModels()" id="dropdown-fetch-models-btn" class="text-claude-accent hover:underline normal-case font-semibold">↻ Refresh</button>
+                </div>
+                <input id="model-search" type="text" placeholder="Search models…" autocomplete="off" class="w-full mb-1 text-xs px-2.5 py-1.5 rounded-lg bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+                <div id="model-options-list" class="space-y-0.5 max-h-64 overflow-y-auto"></div>
+                <div class="mt-2 pt-2 border-t border-claude-borderLight dark:border-claude-borderDark px-2 pb-1">
+                  <label class="block text-[10px] font-medium text-claude-mutedLight dark:text-claude-mutedDark mb-1">Custom model ID (e.g. <span class="font-mono">custom:my-model</span>)</label>
+                  <div class="flex gap-1.5">
+                    <input id="custom-model-input" type="text" placeholder="custom:claude-sonnet-4-5" class="flex-1 min-w-0 text-xs font-mono px-2.5 py-1.5 rounded-lg bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+                    <button onclick="applyCustomModel()" class="px-2.5 py-1.5 rounded-lg bg-claude-accent text-white text-xs font-medium hover:bg-claude-accentHover transition">Use</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button id="send-btn" onclick="sendMessage()" class="w-8 h-8 rounded-xl bg-claude-accent hover:bg-claude-accentHover disabled:opacity-40 text-white flex items-center justify-center transition active:scale-95 shrink-0" title="Send (Enter)"><span data-i="send" class="w-4 h-4"></span></button>
+            <button id="stop-btn" onclick="stopGeneration()" class="hidden w-8 h-8 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white items-center justify-center transition shrink-0" title="Stop"><span class="w-2.5 h-2.5 rounded-[2px] bg-white"></span></button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ARTIFACTS PANEL -->
+    <aside id="artifacts-panel" class="hidden fixed inset-0 lg:static lg:inset-auto z-30 w-full lg:w-[46%] xl:w-[48%] bg-claude-surfaceLight dark:bg-claude-sidebarDark border-l border-claude-borderLight dark:border-claude-borderDark flex flex-col shrink-0">
+      <div class="h-13 py-2.5 px-4 border-b border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between gap-2 shrink-0">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span class="w-6 h-6 rounded-lg bg-claude-accent/15 text-claude-accent flex items-center justify-center text-xs font-mono shrink-0">&lt;/&gt;</span>
+          <div class="min-w-0"><div id="artifact-title" class="text-xs font-semibold truncate">Artifacts</div><div id="artifact-lang-badge" class="text-[10px] font-mono text-claude-mutedLight dark:text-claude-mutedDark uppercase">—</div></div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <select id="artifact-picker" class="hidden max-w-[120px] text-xs rounded-lg px-1.5 py-1 bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none"></select>
+          <div class="flex p-0.5 rounded-lg bg-claude-sidebarLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark text-xs">
+            <button id="artifact-tab-preview" onclick="switchArtifactTab('preview')" class="px-2.5 py-1 rounded-md font-medium transition">Preview</button>
+            <button id="artifact-tab-code" onclick="switchArtifactTab('code')" class="px-2.5 py-1 rounded-md font-medium transition">Code</button>
+          </div>
+          <button onclick="copyArtifactCode()" class="px-2.5 py-1 rounded-lg text-xs border border-claude-borderLight dark:border-claude-borderDark hover:bg-black/5 dark:hover:bg-white/5 transition">Copy</button>
+          <button onclick="downloadArtifact()" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5 transition" title="Download"><span data-i="download" class="block w-4 h-4"></span></button>
+          <button onclick="toggleArtifactsPanel(false)" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5 transition" title="Close"><span data-i="close" class="block w-4 h-4"></span></button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-hidden relative bg-white dark:bg-[#141312]">
+        <div id="artifact-empty" class="absolute inset-0 flex items-center justify-center text-sm text-claude-mutedLight dark:text-claude-mutedDark p-8 text-center">Ask for a web page, app, or SVG and it will show up here as a live preview.</div>
+        <iframe id="artifact-preview-frame" sandbox="allow-scripts allow-forms allow-modals" class="hidden w-full h-full border-0 bg-white"></iframe>
+        <pre id="artifact-code-view" class="hidden w-full h-full overflow-auto p-4 font-mono text-xs leading-relaxed bg-[#1C1B1A] text-gray-100 m-0"><code id="artifact-code-content"></code></pre>
+      </div>
+    </aside>
+  </div>
+
+  <!-- MODAL: MEMO & SKILLS -->
+  <div id="skills-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 modal-backdrop">
+    <div class="bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-5 sm:px-6 pt-5 pb-3 border-b border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between">
+        <div class="flex items-center gap-5">
+          <button id="tab-btn-memo" onclick="switchSkillsTab('memo')" class="pb-2 text-sm font-semibold border-b-2 transition">Memo (Memory)</button>
+          <button id="tab-btn-skills" onclick="switchSkillsTab('skills')" class="pb-2 text-sm font-semibold border-b-2 transition">Skills &amp; Personas</button>
+        </div>
+        <button onclick="closeModal('skills-modal')" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5"><span data-i="close" class="block w-5 h-5"></span></button>
+      </div>
+      <div id="tab-panel-memo" class="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+        <div class="flex items-start justify-between gap-4 bg-claude-bgLight dark:bg-claude-bgDark p-3.5 rounded-xl border border-claude-borderLight dark:border-claude-borderDark">
+          <div><h3 class="text-sm font-semibold">Persistent memory</h3><p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark mt-0.5">Saved facts are added to the system prompt of every chat. The model also saves new durable facts on its own while memory is on.</p></div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5"><input type="checkbox" id="memory-toggle" class="sr-only peer"><span class="w-10 h-6 rounded-full bg-claude-borderLight dark:bg-claude-borderDark peer-checked:bg-claude-accent transition relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span></label>
+        </div>
+        <div class="flex gap-2">
+          <input id="new-memo-input" type="text" placeholder="e.g. I prefer concise answers and runnable code." class="flex-1 min-w-0 px-3.5 py-2 text-sm rounded-xl bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+          <button onclick="addMemoItem()" class="px-4 py-2 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-sm font-medium transition shrink-0">+ Add</button>
+        </div>
+        <div id="memo-items-list" class="space-y-2"></div>
+      </div>
+      <div id="tab-panel-skills" class="hidden p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+        <div class="flex items-center justify-between gap-3">
+          <div><h3 class="text-sm font-semibold">Skills &amp; default persona</h3><p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark">Tap a skill to use it in this chat. ★ makes it the default for new chats.</p></div>
+          <div class="flex gap-2 shrink-0"><button onclick="importSkillDialog()" class="px-3 py-1.5 rounded-xl border border-claude-borderLight dark:border-claude-borderDark hover:border-claude-accent text-xs font-medium transition">Import</button><button onclick="resetSkillForm()" class="px-3 py-1.5 rounded-xl bg-claude-accent/15 text-claude-accent hover:bg-claude-accent/25 text-xs font-semibold transition">+ New</button></div>
+        </div>
+        <div id="skills-manager-list" class="grid grid-cols-1 gap-2.5"></div>
+        <div id="skill-form" class="hidden p-4 rounded-2xl bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark space-y-3">
+          <h4 id="skill-form-title" class="text-xs font-semibold uppercase tracking-wider text-claude-accent">Create skill</h4>
+          <input type="hidden" id="edit-skill-id">
+          <div class="grid grid-cols-3 gap-2.5">
+            <input id="skill-name-input" type="text" placeholder="Skill name" class="col-span-2 px-3 py-2 text-sm rounded-xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+            <input id="skill-icon-input" type="text" placeholder="Icon" maxlength="4" class="px-3 py-2 text-sm rounded-xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+          </div>
+          <input id="skill-desc-input" type="text" placeholder="One-line description" class="w-full px-3 py-2 text-sm rounded-xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+          <textarea id="skill-prompt-input" rows="6" placeholder="Instructions added to the system prompt when this skill is active…" class="w-full px-3 py-2 text-sm rounded-xl bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"></textarea>
+          <div class="flex justify-end gap-2"><button onclick="hideSkillForm()" class="px-3 py-1.5 rounded-xl text-xs font-medium hover:bg-black/5 dark:hover:bg-white/5">Cancel</button><button onclick="saveSkillForm()" class="px-4 py-1.5 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-xs font-semibold transition">Save skill</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SETTINGS -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 modal-backdrop">
+    <div class="bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-5 sm:px-6 pt-4 border-b border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between">
+        <div class="flex items-center gap-5">
+          <button id="stab-btn-providers" onclick="switchSettingsTab('providers')" class="pb-2.5 text-sm font-semibold border-b-2 transition">API &amp; Providers</button>
+          <button id="stab-btn-general" onclick="switchSettingsTab('general')" class="pb-2.5 text-sm font-semibold border-b-2 transition">General</button>
+        </div>
+        <button onclick="closeModal('settings-modal')" class="p-1.5 mb-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5"><span data-i="close" class="block w-5 h-5"></span></button>
+      </div>
+
+      <div id="stab-providers" class="p-5 sm:p-6 overflow-y-auto space-y-5 text-sm">
+        <section class="space-y-2">
+          <div class="flex items-center justify-between"><h3 class="text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark">OmniRoute / custom gateway</h3><span id="prov-custom-state" class="text-[11px]"></span></div>
+          <p class="text-[11px] text-claude-mutedLight dark:text-claude-mutedDark">Any OpenAI- or Anthropic-compatible gateway (OmniRoute, LiteLLM, a proxy…). Requests go from this server, so <span class="font-mono">localhost</span> means the VPS.</p>
+          <div class="flex items-center gap-2 text-[11px]"><button type="button" onclick="setBasePreset('http://localhost:20128/v1')" class="text-claude-accent font-medium hover:underline">OmniRoute local</button><span class="opacity-40">·</span><button type="button" onclick="setBasePreset('https://api.anthropic.com/v1')" class="text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-accent hover:underline">Anthropic direct</button></div>
+          <input id="set-custom-base" type="text" placeholder="http://localhost:20128/v1" class="w-full px-3.5 py-2 rounded-xl font-mono text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+          <div class="flex gap-2"><input id="set-custom-key" type="password" autocomplete="off" placeholder="Gateway API key" class="flex-1 min-w-0 px-3.5 py-2 rounded-xl font-mono text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"><button type="button" onclick="toggleKeyVis('set-custom-key', this)" class="px-3 rounded-xl border border-claude-borderLight dark:border-claude-borderDark text-xs hover:bg-black/5 dark:hover:bg-white/5">Show</button></div>
+          <select id="set-custom-mode" class="w-full px-3.5 py-2 rounded-xl text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent">
+            <option value="auto">Auto-detect (OpenAI /chat/completions, then Anthropic /messages)</option>
+            <option value="openai">OpenAI-compatible (/chat/completions + Bearer)</option>
+            <option value="anthropic">Anthropic Messages (/messages + x-api-key)</option>
+            <option value="anthropic-bearer">Anthropic Messages with Bearer token</option>
+          </select>
+          <div class="flex gap-2"><button type="button" onclick="testProvider('custom')" id="test-custom" class="px-3 py-1.5 rounded-xl bg-claude-accent/15 text-claude-accent hover:bg-claude-accent/25 text-xs font-semibold transition">Test connection</button><button type="button" onclick="clearKey('customKey')" class="px-3 py-1.5 rounded-xl text-xs text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5">Remove key</button></div>
+        </section>
+
+        <section class="space-y-2 pt-4 border-t border-claude-borderLight dark:border-claude-borderDark">
+          <div class="flex items-center justify-between"><h3 class="text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark">Anthropic</h3><span id="prov-anthropic-state" class="text-[11px]"></span></div>
+          <div class="flex gap-2"><input id="set-anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" class="flex-1 min-w-0 px-3.5 py-2 rounded-xl font-mono text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"><button type="button" onclick="toggleKeyVis('set-anthropic-key', this)" class="px-3 rounded-xl border border-claude-borderLight dark:border-claude-borderDark text-xs hover:bg-black/5 dark:hover:bg-white/5">Show</button></div>
+          <div class="flex gap-2"><button type="button" onclick="testProvider('anthropic')" id="test-anthropic" class="px-3 py-1.5 rounded-xl bg-claude-accent/15 text-claude-accent hover:bg-claude-accent/25 text-xs font-semibold transition">Test</button><button type="button" onclick="clearKey('anthropicKey')" class="px-3 py-1.5 rounded-xl text-xs text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5">Remove key</button></div>
+        </section>
+
+        <section class="space-y-2 pt-4 border-t border-claude-borderLight dark:border-claude-borderDark">
+          <div class="flex items-center justify-between"><h3 class="text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark">OpenRouter</h3><span id="prov-openrouter-state" class="text-[11px]"></span></div>
+          <div class="flex gap-2"><input id="set-openrouter-key" type="password" autocomplete="off" placeholder="sk-or-…" class="flex-1 min-w-0 px-3.5 py-2 rounded-xl font-mono text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"><button type="button" onclick="toggleKeyVis('set-openrouter-key', this)" class="px-3 rounded-xl border border-claude-borderLight dark:border-claude-borderDark text-xs hover:bg-black/5 dark:hover:bg-white/5">Show</button></div>
+          <div class="flex gap-2"><button type="button" onclick="testProvider('openrouter')" id="test-openrouter" class="px-3 py-1.5 rounded-xl bg-claude-accent/15 text-claude-accent hover:bg-claude-accent/25 text-xs font-semibold transition">Test</button><button type="button" onclick="clearKey('openrouterKey')" class="px-3 py-1.5 rounded-xl text-xs text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5">Remove key</button></div>
+        </section>
+        <p class="text-[11px] text-claude-mutedLight dark:text-claude-mutedDark">Keys are stored on your server and never sent back to the browser.</p>
+      </div>
+
+      <div id="stab-general" class="hidden p-5 sm:p-6 overflow-y-auto space-y-4 text-sm">
+        <div><label class="block text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark mb-1.5">Your name</label><input id="set-display-name" type="text" maxlength="40" placeholder="What should the greeting call you?" class="w-full px-3.5 py-2 rounded-xl text-sm bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"></div>
+        <div><label class="block text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark mb-1.5">Default model</label><select id="set-default-model" class="w-full px-3.5 py-2 rounded-xl text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"></select></div>
+        <div><label class="block text-xs font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark mb-1.5">Custom instructions</label><textarea id="set-system-prompt" rows="5" placeholder="e.g. Reply casually and keep it short." class="w-full px-3.5 py-2 rounded-xl text-sm bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent"></textarea></div>
+        <div><div class="flex justify-between text-xs mb-1"><span class="font-medium">Max output tokens</span><span id="max-tokens-label" class="font-mono text-claude-accent">8192</span></div><input id="set-max-tokens" type="range" min="1024" max="32768" step="1024" value="8192" class="w-full"></div>
+        <div class="pt-3 border-t border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between gap-2 flex-wrap">
+          <button onclick="closeModal('settings-modal'); openPromptInspector()" class="text-xs text-claude-accent font-medium hover:underline">Preview system prompt →</button>
+          <a href="/api/export" class="py-1.5 px-3 rounded-xl border border-claude-borderLight dark:border-claude-borderDark hover:border-claude-accent text-xs font-medium transition">Export data (JSON)</a>
+        </div>
+      </div>
+
+      <div class="px-5 sm:px-6 py-3.5 border-t border-claude-borderLight dark:border-claude-borderDark flex justify-end gap-2 bg-claude-bgLight/50 dark:bg-claude-bgDark/50">
+        <button onclick="closeModal('settings-modal')" class="px-4 py-2 rounded-xl text-xs font-medium hover:bg-black/5 dark:hover:bg-white/5">Cancel</button>
+        <button onclick="saveSettings()" class="px-5 py-2 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-xs font-semibold shadow-sm transition">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PROMPT INSPECTOR -->
+  <div id="inspector-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 modal-backdrop">
+    <div class="bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark rounded-2xl w-full max-w-xl max-h-[82vh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between">
+        <div><h2 class="font-serif text-lg font-medium">System prompt</h2><p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark">Active skill + style + memories sent with every request</p></div>
+        <button onclick="closeModal('inspector-modal')" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5"><span data-i="close" class="block w-5 h-5"></span></button>
+      </div>
+      <div class="p-6 overflow-y-auto"><pre id="compiled-prompt-preview" class="whitespace-pre-wrap font-mono text-xs p-4 rounded-xl bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark leading-relaxed"></pre></div>
+      <div class="px-6 py-3 border-t border-claude-borderLight dark:border-claude-borderDark flex justify-between items-center">
+        <button onclick="closeModal('inspector-modal'); openSkillsModal('memo')" class="text-xs text-claude-accent font-medium hover:underline">Edit memo &amp; skills →</button>
+        <button onclick="closeModal('inspector-modal')" class="px-4 py-1.5 rounded-xl bg-claude-accent text-white text-xs font-medium">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: GENERIC DIALOG -->
+  <div id="dialog-modal" class="hidden fixed inset-0 z-[60] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 modal-backdrop">
+    <div class="bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-claude-borderLight dark:border-claude-borderDark flex items-center justify-between"><h2 id="dialog-title" class="font-serif text-lg font-medium"></h2><button onclick="closeModal('dialog-modal')" class="p-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5"><span data-i="close" class="block w-5 h-5"></span></button></div>
+      <div id="dialog-body" class="p-6 overflow-y-auto space-y-3 text-sm"></div>
+    </div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
