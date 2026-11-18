@@ -182,13 +182,13 @@ REPO LAYOUT:
 - pom.xml (parent, packaging pom, modules = every custom plugin) and plugins-src/<name>/ per custom plugin, each with its own pom.xml (Paper API provided scope, Java 21, finalName = plugin name), src/main/resources/plugin.yml, config.yml, and complete Java classes. Code MUST compile: only APIs you are sure exist, Adventure/MiniMessage for text, no NMS/reflection, no TODO/placeholder bodies, every import present, commands/listeners registered in onEnable, config saved, null/permission checks.
 - .github/workflows/build.yml: on push, set up JDK 21 (temurin), run mvn -B package, upload all plugins-src/*/target/*.jar (exclude original-*) as an artifact, and on tags v* also create a GitHub Release with the jars plus a server-pack.zip.
 - server/: start.sh (aikar flags, -Xms/-Xmx variables), eula.txt (eula=true), server.properties, bukkit.yml, spigot.yml, paper-global.yml / paper-world-defaults.yml sensible tuning, ops/whitelist templates.
-- scripts/setup.sh: downloads the Paper jar via the PaperMC API (https://fill.papermc.io/v3/projects/paper/versions/<mc>/builds, take the newest stable build's download URL), downloads third-party plugins listed in plugins.txt (one Modrinth slug per line, via https://api.modrinth.com/v2/project/<slug>/version filtered by loader paper and the Minecraft version), and downloads the latest release jars of this repo into server/plugins/. Mention the user should verify the third-party versions load.
+- scripts/setup.sh: downloads the Paper jar via the PaperMC API (GET https://fill.papermc.io/v3/projects/paper/versions/<mc>/builds with a descriptive User-Agent header, take the newest STABLE build's downloads[\"server:default\"].url; jq is available), downloads third-party plugins listed in plugins.txt (one Modrinth slug per line, via https://api.modrinth.com/v2/project/<slug>/version filtered by loader paper and the Minecraft version), and downloads the latest release jars of this repo into server/plugins/. Mention the user should verify the third-party versions load.
 - plugins.txt: popular existing plugins (LuckPerms, Vault, PlaceholderAPI, WorldEdit, etc. — only those that fit) so you write custom code only where nothing good exists.
 - worlds/ or arenas notes if the mode needs them (describe how to create arenas; never fake binary world files).
 
 QUALITY: a "large" server can mean 10-30 plugins: keep each plugin focused (one job) with a shared naming scheme, and make them cooperate through config and permissions, not hard dependencies. Start with the core ones, finish all files completely, never stop at a skeleton. If a push call fails, read the error, fix the file and retry. Never claim something was pushed unless the tool succeeded.
 
-JAR BUILDS: jars are built by GitHub Actions in the repo (Actions tab → latest run → artifacts, or Releases after tagging v1.0.0), so nothing needs compiling on the VPS. Tell the user that. They need a token with repo AND workflow scopes to push the workflow file.`,
+PAPER JAR: you have a paper_info tool: call it with the Minecraft version (e.g. 1.21.11) to get the real newest stable Paper build, its direct download URL and sha256. Put those in README/setup.sh, and give the user a one-tap link [Download Paper <version>](/api/paper/<version>/download) which fetches it straight from PaperMC. Never push the server jar itself to GitHub (binary, huge); setup.sh downloads it at install time.\n\nJAR BUILDS: jars are built by GitHub Actions in the repo (Actions tab → latest run → artifacts, or Releases after tagging v1.0.0), so nothing needs compiling on the VPS. Tell the user that. They need a token with repo AND workflow scopes to push the workflow file.`,
   },
   {
     slug: 'file-reading', name: 'Reading & summarizing documents', enabled: 0,
@@ -199,6 +199,7 @@ JAR BUILDS: jars are built by GitHub Actions in the repo (Actions tab → latest
 
 const insSkill = db.prepare(`INSERT OR IGNORE INTO skills (slug,name,description,instructions,enabled,builtin) VALUES (?,?,?,?,?,1)`);
 for (const s of DEFAULT_SKILLS) insSkill.run(s.slug, s.name, s.description, s.instructions, s.enabled);
+for (const s of DEFAULT_SKILLS.filter((x) => x.slug.startsWith('mc-'))) db.prepare('UPDATE skills SET instructions=?, description=?, name=? WHERE slug=? AND builtin=1').run(s.instructions, s.description, s.name, s.slug);
 
 // give built-in skills a nicer icon (only while they still have the default)
 const ICONS = { coding: '⌘', concise: '✂', writer: '✎', 'deep-research': '🔎', 'frontend-design': '🎨', dataviz: '📊', 'ux-copy': '💬',

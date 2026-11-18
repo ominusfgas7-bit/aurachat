@@ -279,6 +279,14 @@ app.delete('/api/skills/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Paper server jar (fetched from PaperMC, never stored on this server) ----------
+app.get('/api/paper/:version?', async (req, res) => {
+  try { res.json(await webtools.paperInfo(req.params.version)); } catch (e) { res.status(502).json({ error: e.message }); }
+});
+app.get('/api/paper/:version/download', async (req, res) => {
+  try { res.redirect(302, (await webtools.paperInfo(req.params.version)).url); } catch (e) { res.status(502).send(e.message); }
+});
+
 // ---------- connectors (MCP servers, e.g. GitHub) ----------
 const getConnectors = () => { try { const a = JSON.parse(getSetting('mcp_servers', '[]')); return Array.isArray(a) ? a : []; } catch { return []; } };
 const pubConnector = (x) => ({ id: x.id, name: x.name, url: x.url, enabled: x.enabled !== false, readOnly: !!x.readOnly, filter: x.filter || '', hasToken: !!x.token, hint: hint(x.token) });
@@ -468,9 +476,11 @@ app.post('/api/chat', async (req, res) => {
       if (!toolset.defs.length) toolset = null;
     }
     // gateways have no native web search: give the model our own web_search / web_fetch tools
-    if (opts.webSearch && modelId.startsWith('custom:')) {
-      toolset = webtools.withWebTools(toolset, process.env.TAVILY_API_KEY || getSetting('tavily_key', ''));
-      opts.webSearch = false;
+    const skSlug = skillId ? (db.prepare('SELECT slug FROM skills WHERE id=?').get(skillId)?.slug || '') : '';
+    const wantSearch = !!opts.webSearch && modelId.startsWith('custom:');
+    if (wantSearch || skSlug.startsWith('mc-')) {
+      toolset = webtools.withWebTools(toolset, process.env.TAVILY_API_KEY || getSetting('tavily_key', ''), { search: wantSearch || skSlug.startsWith('mc-'), paper: true });
+      if (modelId.startsWith('custom:')) opts.webSearch = false;
     }
     const stream = streamModel({ modelId, system: buildSystem(style, skillId, !!toolset), messages: buildMessages(conv.id), opts: { ...opts, toolset }, signal: ac.signal });
     for await (const ev of stream) {

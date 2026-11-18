@@ -80,6 +80,22 @@ function parseDdg(html, n) {
   return out;
 }
 
+// ---- PaperMC downloads (https://docs.papermc.io/misc/downloads-service/) ----
+const PAPER_UA = 'AuraChat/1.0 (self-hosted chat; https://github.com/ominusfgas7-bit/aurachat)';
+async function paperInfo(version) {
+  const base = (process.env.PAPER_API || 'https://fill.papermc.io').replace(/\/+$/, '') + '/v3/projects/paper';
+  const get = async (u) => { const r = await fetch(u, { headers: { 'user-agent': PAPER_UA, accept: 'application/json' } }); if (!r.ok) throw new Error(`PaperMC API ${r.status} for ${u.replace(base, '')}`); return r.json(); };
+  let v = String(version || 'latest').trim();
+  if (!/^[0-9][0-9a-z.\-]*$/i.test(v) && v !== 'latest') throw new Error('Bad version');
+  if (v === 'latest') { const p = await get(base); v = Object.values(p.versions || {}).flat()[0]; if (!v) throw new Error('No versions returned'); }
+  let builds; try { builds = await get(`${base}/versions/${v}/builds`); } catch (e) { if (/ 404 /.test(e.message)) throw new Error(`Paper has no builds for ${v}`); throw e; }
+  const list = Array.isArray(builds) ? builds : builds.builds || [];
+  const b = list.find((x) => x.channel === 'STABLE') || list[0];
+  const d = b?.downloads?.['server:default'];
+  if (!d?.url) throw new Error(`No downloadable build for ${v}`);
+  return { version: v, build: b.id, channel: b.channel, name: d.name, url: d.url, size: d.size, sha256: d.checksums?.sha256 };
+}
+
 async function webSearch({ query, max_results }, tavilyKey) {
   const q = String(query || '').trim().slice(0, 300);
   if (!q) return 'Error: query is required';
@@ -101,23 +117,25 @@ async function webSearch({ query, max_results }, tavilyKey) {
 
 const defs = [
   { name: 'web_search', description: 'Search the web for current information. Returns titles, URLs and snippets. Follow up with web_fetch to read a page.', schema: { type: 'object', properties: { query: { type: 'string' }, max_results: { type: 'integer', description: '1-10, default 6' } }, required: ['query'] } },
+  { name: 'paper_info', paper: true, description: 'Look up the newest Paper (Minecraft server) build for a Minecraft version, e.g. "1.21.11" (or "latest"). Returns the direct jar URL, build number and sha256. Use it for download links and setup scripts.', schema: { type: 'object', properties: { version: { type: 'string' } } } },
   { name: 'web_fetch', description: 'Fetch a public web page and return its text content.', schema: { type: 'object', properties: { url: { type: 'string' }, max_chars: { type: 'integer', description: 'default 14000' } }, required: ['url'] } },
 ];
 
 // Merge with an existing toolset (e.g. MCP connectors) -> { defs, run, label, notes }
-function withWebTools(base, tavilyKey) {
+function withWebTools(base, tavilyKey, { search = true, paper = true } = {}) {
   const b = base || { defs: [], run: async () => ({ text: 'unknown tool', isError: true }), label: (n) => n, notes: [] };
   const taken = new Set(b.defs.map((d) => d.name));
-  const mine = defs.filter((d) => !taken.has(d.name));
+  const mine = defs.filter((d) => !taken.has(d.name) && (d.paper ? paper : search));
   return {
     defs: [...mine, ...b.defs], notes: b.notes,
-    label: (n) => (n === 'web_search' ? 'Web search' : n === 'web_fetch' ? 'Web fetch' : b.label(n)),
+    label: (n) => (n === 'paper_info' ? 'Paper downloads' : n === 'web_search' ? 'Web search' : n === 'web_fetch' ? 'Web fetch' : b.label(n)),
     run: async (name, args, signal) => {
       if (name === 'web_search' && mine.some((d) => d.name === name)) return { text: await webSearch(args, tavilyKey) };
+      if (name === 'paper_info' && mine.some((d) => d.name === name)) { try { return { text: JSON.stringify(await paperInfo(args.version)) }; } catch (e) { return { text: `Error: ${e.message}`, isError: true }; } }
       if (name === 'web_fetch' && mine.some((d) => d.name === name)) return { text: await webFetch(args) };
       return b.run(name, args, signal);
     },
   };
 }
 
-module.exports = { withWebTools, webFetch, webSearch, parseDdg, htmlToText, privateIp };
+module.exports = { paperInfo, withWebTools, webFetch, webSearch, parseDdg, htmlToText, privateIp };
