@@ -43,7 +43,7 @@ const ico = (n, cls = 'w-4 h-4') => `<span class="inline-flex ${cls}">${ICONS[n]
 const st = {
   appName: 'AuraChat', convs: [], cur: null, messages: [], models: [], model: null, keys: {}, config: { providers: {} },
   skills: [], activeSkillId: 0, streaming: false, abort: null, pending: [], search: '',
-  opts: { effort: '', webSearch: false, connectors: true, autoBuild: true, style: 'normal', temperature: 1, maxTokens: 8192 },
+  opts: { effort: '', webSearch: false, connectors: true, autoBuild: true, style: 'normal', temperature: 1, maxTokens: 16000 },
   artifacts: [], curArtifact: -1, artTab: 'preview', curStarred: false,
 };
 try { Object.assign(st.opts, JSON.parse(localStorage.getItem('aura_opts') || '{}')); } catch {}
@@ -161,17 +161,28 @@ function makeZip(files) { // stored (no compression) zip, no dependencies
 async function buildJar(list, btn, { auto = false } = {}) {
   const card = btn.closest('.filecard'); card.querySelector('.buildout')?.remove();
   const old = btn.textContent; btn.disabled = true; btn.textContent = 'Building…';
-  const out = document.createElement('div'); out.className = 'buildout mx-3 mb-3 p-2.5 text-xs rounded-xl border border-claude-borderLight dark:border-claude-borderDark'; out.textContent = auto ? '⚙ Compiling your plugin… (first build downloads dependencies, can take a few minutes)' : 'Compiling…'; card.appendChild(out);
+  const out = document.createElement('div'); out.className = 'buildout mx-3 mb-3 p-2.5 text-xs rounded-xl border border-claude-borderLight dark:border-claude-borderDark'; card.appendChild(out);
+  const serverish = list.some((f) => /(^|\/)(server\/|plugins\.txt$)/.test(f.name)) || list.filter((f) => /(^|\/)plugin\.yml$/.test(f.name)).length > 1;
+  const mode = serverish ? 'pack' : 'jar';
   let res = { ok: false, log: '' };
+  const spin = (t) => { out.innerHTML = `<div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full border-2 border-claude-accent border-t-transparent animate-spin"></span><span class="min-w-0 truncate">${esc(t)}</span></div>`; };
   try {
-    res = await api('/build', { method: 'POST', body: { files: list } });
-    if (res.ok) {
-      const bin = atob(res.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const blob = new Blob([u8], { type: 'application/java-archive' });
-      out.innerHTML = `<div class="flex items-center gap-3"><span class="flex-1 min-w-0 truncate">✓ Built <b>${esc(res.name)}</b> · ${(res.size / 1024).toFixed(0)} KB</span><button type="button" class="px-3 py-1 rounded-lg bg-claude-accent text-white font-semibold">Download .jar</button></div>`;
-      $('button', out).onclick = () => saveBlob(blob, res.name);
-      saveBlob(blob, res.name);
-    } else { out.className += ' font-mono whitespace-pre-wrap text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30'; out.textContent = 'Build failed:\n' + res.log; }
+    spin(auto ? 'Starting build…' : 'Starting…');
+    const { id } = await api('/build', { method: 'POST', body: { files: list, mode } });
+    for (let n = 0; n < 900; n++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const j = await api('/build/' + id);
+      if (j.state === 'running') { spin(j.steps.at(-1) || 'Working…'); continue; }
+      if (j.state === 'done') {
+        const r = j.result, mb = (r.size / 1048576).toFixed(r.size > 1048576 ? 1 : 2) + ' MB';
+        const label = r.kind === 'pack' ? `Server pack ready · Paper ${esc(r.mc)} · ${r.plugins} plugins · ${mb}` : `${esc(r.name)} · ${(r.size / 1024).toFixed(0)} KB`;
+        out.innerHTML = `<div class="flex items-center gap-3"><span class="flex-1 min-w-0">✓ ${label}${r.notes?.length ? `<span class="block text-[11px] opacity-70 mt-1">${esc(r.notes.join(' · '))}</span>` : ''}</span><a href="/api/packs/${id}" download class="px-3 py-1.5 rounded-lg bg-claude-accent text-white font-semibold whitespace-nowrap">Download ${r.kind === 'pack' ? '.zip' : '.jar'}</a></div>`;
+        const a = document.createElement('a'); a.href = `/api/packs/${id}`; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+        res = { ok: true, ...r }; break;
+      }
+      res = { ok: false, log: j.log || 'Build failed', buildError: j.buildError };
+      out.className += ' font-mono whitespace-pre-wrap text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30'; out.textContent = 'Build failed:\n' + res.log; break;
+    }
   } catch (e) { res = { ok: false, log: e.message }; out.textContent = e.message; }
   btn.disabled = false; btn.textContent = old;
   return res;
@@ -180,8 +191,7 @@ async function autoBuildLast() {
   const zc = $('#messages-container').lastElementChild?.querySelector?.('.zipcard');
   if (!zc?._buildBtn) return;
   const res = await buildJar(zc._list, zc._buildBtn, { auto: true });
-  if (!res.ok && /Build tool missing|Nothing to build/.test(res.log || '')) return;
-  if (!res.ok && (st.fixTries || 0) < 2 && !st.streaming) {
+  if (!res.ok && res.buildError && (st.fixTries || 0) < 2 && !st.streaming) {
     st.fixTries = (st.fixTries || 0) + 1;
     runChat({ auto: true, text: `The build failed with these errors. Fix them and resend ALL files in full:\n\n\`\`\`\n${(res.log || '').slice(-2500)}\n\`\`\`` });
   }
@@ -243,7 +253,7 @@ function enhance(el, finalize) {
     z.innerHTML = `<div class="filehead"><span class="fileicon">${ico('file', 'w-4 h-4')}</span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">Project files (.zip)</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark truncate">${list.length} files · ${esc(list.map((f) => f.name.split('/').pop()).slice(0, 4).join(', '))}${list.length > 4 ? '…' : ''}</span></span><button type="button" class="primary">Download all</button></div>`;
     const hasBuild = list.some((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?)$/.test(f.name) || f.name.endsWith('.java'));
     const head = $('.filehead', z);
-    if (hasBuild) { const bb = document.createElement('button'); bb.type = 'button'; bb.textContent = 'Build .jar'; head.insertBefore(bb, $('button', z)); bb.onclick = () => buildJar(list, bb); z._buildBtn = bb; z._list = list; }
+    if (hasBuild) { const bb = document.createElement('button'); bb.type = 'button'; bb.textContent = list.some((f) => /(^|\/)(server\/|plugins\.txt$)/.test(f.name)) || list.filter((f) => /(^|\/)plugin\.yml$/.test(f.name)).length > 1 ? 'Build server .zip' : 'Build .jar'; head.insertBefore(bb, $('button', z)); bb.onclick = () => buildJar(list, bb); z._buildBtn = bb; z._list = list; }
     $('button.primary', z).onclick = () => saveBlob(makeZip(list), 'project.zip');
     el.appendChild(z);
   }

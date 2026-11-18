@@ -510,55 +510,24 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ---------- build .jar from generated files (needs JDK + Maven on this server) ----------
-const { spawn } = require('child_process');
-const fsx = require('fs'), osx = require('os');
-function run(cmd, args, cwd, ms) {
-  return new Promise((resolve) => {
-    let out = '', done = false;
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, MAVEN_OPTS: '-Xmx512m' } });
-    const t = setTimeout(() => { if (!done) { p.kill('SIGKILL'); out += '\n[build timed out]'; } }, ms);
-    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
-    p.on('error', (e) => { done = true; clearTimeout(t); resolve({ code: 127, out: out + e.message }); });
-    p.on('close', (code) => { done = true; clearTimeout(t); resolve({ code, out }); });
-  });
-}
-const walk = (d) => fsx.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
-app.post('/api/build', async (req, res) => {
-  const files = (Array.isArray(req.body?.files) ? req.body.files : []).filter((f) => f && typeof f.name === 'string' && typeof f.text === 'string').slice(0, 200);
-  if (!files.length) return res.json({ ok: false, log: 'No files' });
-  const dir = fsx.mkdtempSync(path.join(osx.tmpdir(), 'aurabuild-'));
-  const cleanup = () => fsx.rmSync(dir, { recursive: true, force: true });
-  try {
-    for (const f of files) {
-      const rel = path.normalize(f.name.replace(/^\/+/, ''));
-      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
-      fsx.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
-      fsx.writeFileSync(path.join(dir, rel), f.text);
-    }
-    const has = (n) => files.some((f) => f.name.replace(/^\/+/, '') === n || f.name.endsWith('/' + n));
-    let r, jar;
-    if (has('pom.xml')) {
-      const root = path.dirname(walk(dir).find((p) => path.basename(p) === 'pom.xml'));
-      r = await run('mvn', ['-q', '-B', '-DskipTests', 'package'], root, 8 * 60 * 1000);
-      jar = fsx.existsSync(path.join(root, 'target')) && walk(path.join(root, 'target')).filter((p) => p.endsWith('.jar') && !/original-|sources|javadoc/.test(p)).sort((a, b) => fsx.statSync(b).size - fsx.statSync(a).size)[0];
-    } else if (has('build.gradle') || has('build.gradle.kts')) {
-      r = await run('gradle', ['build', '-x', 'test', '--no-daemon', '-q'], dir, 10 * 60 * 1000);
-      jar = fsx.existsSync(path.join(dir, 'build/libs')) && walk(path.join(dir, 'build/libs')).find((p) => p.endsWith('.jar') && !/plain|sources/.test(p));
-    } else if (files.some((f) => f.name.endsWith('.java'))) {
-      const out = path.join(dir, '_out'); fsx.mkdirSync(out);
-      const srcs = walk(dir).filter((p) => p.endsWith('.java') && !p.startsWith(out));
-      r = await run('javac', ['-d', out, ...srcs], dir, 3 * 60 * 1000);
-      if (r.code === 0) {
-        for (const p of walk(dir)) { if (p.startsWith(out) || p.endsWith('.java')) continue; const rel = path.relative(dir, p); fsx.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fsx.copyFileSync(p, path.join(out, rel)); }
-        const j = path.join(dir, 'app.jar'); const r2 = await run('jar', ['cf', j, '-C', out, '.'], dir, 60000); r.out += r2.out; if (r2.code === 0) jar = j;
-      }
-    } else return res.json({ ok: false, log: 'Nothing to build: need a pom.xml, build.gradle or .java files.' });
-    const log = (r.out || '').split('\n').filter((l) => !/^Picked up /.test(l)).join('\n').slice(-3500);
-    if (r.code === 127) return res.json({ ok: false, log: `Build tool missing on the server.\nInstall: apt-get install -y default-jdk-headless maven\n\n${log}` });
-    if (r.code !== 0 || !jar) return res.json({ ok: false, log: log || 'Build failed' });
-    res.json({ ok: true, name: path.basename(jar), size: fsx.statSync(jar).size, data: fsx.readFileSync(jar).toString('base64'), log });
-  } catch (e) { res.json({ ok: false, log: e.message }); } finally { cleanup(); }
+// ---------- build jobs: compile plugins / assemble a ready server .zip (see builder.js) ----------
+const builder = require('./builder');
+app.post('/api/build', (req, res) => {
+  const files = (Array.isArray(req.body?.files) ? req.body.files : []).filter((f) => f && typeof f.name === 'string' && typeof f.text === 'string').slice(0, 300);
+  if (!files.length) return res.status(400).json({ error: 'No files' });
+  const mode = ['jar', 'pack'].includes(req.body?.mode) ? req.body.mode : 'pack';
+  res.json({ id: builder.startJob(files, { mode, mcVersion: String(req.body?.mcVersion || '').slice(0, 20) }) });
+});
+app.get('/api/build/:id', (req, res) => {
+  const j = builder.getJob(req.params.id);
+  if (!j) return res.status(404).json({ error: 'Unknown job (server restarted?)' });
+  res.json({ state: j.state, steps: j.steps.slice(-4), log: j.log, buildError: !!j.buildError, result: j.result || null });
+});
+app.get('/api/packs/:id', (req, res) => {
+  const p = builder.packPath(req.params.id), j = builder.getJob(req.params.id);
+  if (!p || !require('fs').existsSync(p)) return res.status(404).send('Expired — build it again');
+  const name = j?.result?.kind === 'jar' ? j.result.name : 'minecraft-server.zip';
+  res.download(p, name);
 });
 
 // ---------- export ----------
