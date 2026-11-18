@@ -27,6 +27,7 @@ if (!ADMIN_PASSWORD) {
   process.exit(1);
 }
 const mcp = require('./mcp');
+const webtools = require('./webtools');
 const APP_NAME = process.env.APP_NAME || 'AuraChat';
 
 let SESSION_SECRET = process.env.SESSION_SECRET || getSetting('session_secret');
@@ -309,7 +310,7 @@ function buildSystem(style, skillId, hasTools) {
   const parts = [
     `You are a helpful, thoughtful AI assistant in a self-hosted chat app. Today is ${new Date().toUTCString().slice(0, 16)}. Format answers with Markdown when it helps. When the user asks you to build a web page, app, widget or visual, deliver it as ONE complete self-contained file in a single fenced \`\`\`html block (inline CSS and JS, no build step) or a \`\`\`svg block, so it can be previewed live in the Artifacts panel.
 
-When the user wants files, a project, plugin source, configs or scripts: put EACH file in its own fenced code block whose FIRST line is a file marker comment with the path, e.g. \`// file: src/Main.java\`, \`# file: config.yml\`, \`<!-- file: index.html -->\`, \`-- file: setup.sql\`. The app hides the code behind download cards and adds a "Download all (.zip)" button, so do NOT say you created or attached a zip or any file yourself, and never paste file contents outside those blocks. You cannot produce binaries (.jar, .exe, images); give the source plus short build steps instead. Keep prose short and don't repeat code in the explanation.`,
+When the user wants files, a project, plugin source, configs or scripts: put EACH file in its own fenced code block whose FIRST line is a file marker comment with the path, e.g. \`// file: src/Main.java\`, \`# file: config.yml\`, \`<!-- file: index.html -->\`, \`-- file: setup.sql\`. The app hides the code behind download cards and adds a "Download all (.zip)" button, so do NOT say you created or attached a zip or any file yourself, and never paste file contents outside those blocks. For Java/Minecraft plugins ALWAYS include a complete pom.xml (Maven, with the right repositories/dependencies, e.g. Paper API as provided scope) plus plugin.yml; the app has a \"Build .jar\" button that compiles the files on the server. You cannot produce other binaries (.exe, images). Keep prose short and don't repeat code in the explanation.`,
   ];
   if (hasTools) parts.push('## Connectors\nYou can call tools connected to the user\'s accounts (e.g. GitHub). Use them when the user asks to read, search, create or change files/repos; if you need an owner/repo or path you don\'t know, look it up with a tool or ask briefly. After using tools, say plainly what you did (repo, path, branch). Never claim to have changed something unless a tool call succeeded.');
   if (STYLES[style]) parts.push(STYLES[style]);
@@ -466,6 +467,11 @@ app.post('/api/chat', async (req, res) => {
       if (toolset.notes.length) send({ type: 'status', text: 'Connector problem: ' + toolset.notes[0] });
       if (!toolset.defs.length) toolset = null;
     }
+    // gateways have no native web search: give the model our own web_search / web_fetch tools
+    if (opts.webSearch && modelId.startsWith('custom:')) {
+      toolset = webtools.withWebTools(toolset, process.env.TAVILY_API_KEY || getSetting('tavily_key', ''));
+      opts.webSearch = false;
+    }
     const stream = streamModel({ modelId, system: buildSystem(style, skillId, !!toolset), messages: buildMessages(conv.id), opts: { ...opts, toolset }, signal: ac.signal });
     for await (const ev of stream) {
       if (ev.t === 'thinking') { thinking += ev.text; send({ type: 'thinking', text: ev.text }); continue; }
@@ -492,6 +498,57 @@ app.post('/api/chat', async (req, res) => {
     send({ type: 'done', messageId: id });
     res.end();
   }
+});
+
+// ---------- build .jar from generated files (needs JDK + Maven on this server) ----------
+const { spawn } = require('child_process');
+const fsx = require('fs'), osx = require('os');
+function run(cmd, args, cwd, ms) {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const p = spawn(cmd, args, { cwd, env: { ...process.env, MAVEN_OPTS: '-Xmx512m' } });
+    const t = setTimeout(() => { if (!done) { p.kill('SIGKILL'); out += '\n[build timed out]'; } }, ms);
+    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
+    p.on('error', (e) => { done = true; clearTimeout(t); resolve({ code: 127, out: out + e.message }); });
+    p.on('close', (code) => { done = true; clearTimeout(t); resolve({ code, out }); });
+  });
+}
+const walk = (d) => fsx.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+app.post('/api/build', async (req, res) => {
+  const files = (Array.isArray(req.body?.files) ? req.body.files : []).filter((f) => f && typeof f.name === 'string' && typeof f.text === 'string').slice(0, 200);
+  if (!files.length) return res.json({ ok: false, log: 'No files' });
+  const dir = fsx.mkdtempSync(path.join(osx.tmpdir(), 'aurabuild-'));
+  const cleanup = () => fsx.rmSync(dir, { recursive: true, force: true });
+  try {
+    for (const f of files) {
+      const rel = path.normalize(f.name.replace(/^\/+/, ''));
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+      fsx.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fsx.writeFileSync(path.join(dir, rel), f.text);
+    }
+    const has = (n) => files.some((f) => f.name.replace(/^\/+/, '') === n || f.name.endsWith('/' + n));
+    let r, jar;
+    if (has('pom.xml')) {
+      const root = path.dirname(walk(dir).find((p) => path.basename(p) === 'pom.xml'));
+      r = await run('mvn', ['-q', '-B', '-DskipTests', 'package'], root, 8 * 60 * 1000);
+      jar = fsx.existsSync(path.join(root, 'target')) && walk(path.join(root, 'target')).filter((p) => p.endsWith('.jar') && !/original-|sources|javadoc/.test(p)).sort((a, b) => fsx.statSync(b).size - fsx.statSync(a).size)[0];
+    } else if (has('build.gradle') || has('build.gradle.kts')) {
+      r = await run('gradle', ['build', '-x', 'test', '--no-daemon', '-q'], dir, 10 * 60 * 1000);
+      jar = fsx.existsSync(path.join(dir, 'build/libs')) && walk(path.join(dir, 'build/libs')).find((p) => p.endsWith('.jar') && !/plain|sources/.test(p));
+    } else if (files.some((f) => f.name.endsWith('.java'))) {
+      const out = path.join(dir, '_out'); fsx.mkdirSync(out);
+      const srcs = walk(dir).filter((p) => p.endsWith('.java') && !p.startsWith(out));
+      r = await run('javac', ['-d', out, ...srcs], dir, 3 * 60 * 1000);
+      if (r.code === 0) {
+        for (const p of walk(dir)) { if (p.startsWith(out) || p.endsWith('.java')) continue; const rel = path.relative(dir, p); fsx.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true }); fsx.copyFileSync(p, path.join(out, rel)); }
+        const j = path.join(dir, 'app.jar'); const r2 = await run('jar', ['cf', j, '-C', out, '.'], dir, 60000); r.out += r2.out; if (r2.code === 0) jar = j;
+      }
+    } else return res.json({ ok: false, log: 'Nothing to build: need a pom.xml, build.gradle or .java files.' });
+    const log = (r.out || '').split('\n').filter((l) => !/^Picked up /.test(l)).join('\n').slice(-3500);
+    if (r.code === 127) return res.json({ ok: false, log: `Build tool missing on the server.\nInstall: apt-get install -y default-jdk-headless maven\n\n${log}` });
+    if (r.code !== 0 || !jar) return res.json({ ok: false, log: log || 'Build failed' });
+    res.json({ ok: true, name: path.basename(jar), size: fsx.statSync(jar).size, data: fsx.readFileSync(jar).toString('base64'), log });
+  } catch (e) { res.json({ ok: false, log: e.message }); } finally { cleanup(); }
 });
 
 // ---------- export ----------

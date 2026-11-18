@@ -158,6 +158,15 @@ function makeZip(files) { // stored (no compression) zip, no dependencies
   const e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
   return new Blob([...parts, ...central, e.buffer], { type: 'application/zip' });
 }
+async function buildJar(list, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Building…'; toast('Building .jar — can take a few minutes the first time');
+  try {
+    const r = await api('/build', { method: 'POST', body: { files: list } });
+    if (r.ok) { const bin = atob(r.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); saveBlob(new Blob([u8], { type: 'application/java-archive' }), r.name); toast('Built ' + r.name); }
+    else { const w = document.createElement('div'); w.className = 'mt-2 p-3 text-xs font-mono whitespace-pre-wrap rounded-xl bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300 border border-red-300/60 dark:border-red-900/60'; w.textContent = 'Build failed:\n' + r.log; btn.closest('.filecard').appendChild(w); }
+  } catch (e) { toast(e.message); }
+  btn.disabled = false; btn.textContent = old;
+}
 function saveBlob(blob, name) { const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
 function uniqueNames(files) { const seen = {}; return files.map((f) => { let n = f.name.replace(/^\/+/, '').replace(/\.\.\//g, ''); if (seen[n]) { const i = n.lastIndexOf('.'); n = i > 0 ? `${n.slice(0, i)}-${seen[n]}${n.slice(i)}` : `${n}-${seen[n]}`; } seen[n] = (seen[n] || 0) + 1; return { name: n, text: f.text }; }); }
 function enhance(el, finalize) {
@@ -213,7 +222,10 @@ function enhance(el, finalize) {
   if (finalize && files.filter((f) => f.name.includes('.')).length >= 2) {
     const list = uniqueNames(files), z = document.createElement('div'); z.className = 'filecard zipcard';
     z.innerHTML = `<div class="filehead"><span class="fileicon">${ico('file', 'w-4 h-4')}</span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">Project files (.zip)</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark truncate">${list.length} files · ${esc(list.map((f) => f.name.split('/').pop()).slice(0, 4).join(', '))}${list.length > 4 ? '…' : ''}</span></span><button type="button" class="primary">Download all</button></div>`;
-    $('button', z).onclick = () => saveBlob(makeZip(list), 'project.zip');
+    const hasBuild = list.some((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?)$/.test(f.name) || f.name.endsWith('.java'));
+    const head = $('.filehead', z);
+    if (hasBuild) { const bb = document.createElement('button'); bb.type = 'button'; bb.textContent = 'Build .jar'; head.insertBefore(bb, $('button', z)); bb.onclick = () => buildJar(list, bb); }
+    $('button.primary', z).onclick = () => saveBlob(makeZip(list), 'project.zip');
     el.appendChild(z);
   }
   updateArtifactBadge();

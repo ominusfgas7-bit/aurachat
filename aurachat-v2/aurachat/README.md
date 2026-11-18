@@ -58,3 +58,8 @@ and **Read-only** to block writes. Needs a model that supports tool calling.
 ## Files
 
 When a reply contains code files, the code is hidden behind cards (View / Copy / Download) and a **Download all (.zip)** card is added.
+
+## Web search / fetch and .jar builds
+
+- With a gateway model, the **Web search** toggle gives the model its own `web_search` (DuckDuckGo, or Tavily if `TAVILY_API_KEY` is set) and `web_fetch` tools. Private/local addresses are blocked.
+- The **Build .jar** button on a project's zip card compiles on the server. Needs: `apt-get install -y default-jdk-headless maven`.
