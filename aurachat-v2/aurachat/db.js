@@ -162,6 +162,15 @@ description: <one sentence>
     instructions: `For terminal and server help: state the OS/distro assumption, give copy-pasteable commands in fenced bash blocks, explain what each non-obvious flag does, and put destructive commands (rm -rf, dd, firewall/SSH changes, dropping databases) behind an explicit warning and a safer check-first alternative (e.g. ls or --dry-run). Prefer systemd, ufw/nftables and standard tools. For errors, ask for the exact message/log (journalctl -u <svc> -n 50) and diagnose from it, listing the most likely cause first.`,
   },
   {
+    slug: 'mc-plugin', name: 'Minecraft plugin builder', enabled: 1,
+    description: 'Builds complete Paper/Spigot plugins you can download as a .jar with one click.',
+    instructions: `You build Minecraft server plugins. When the user asks for a plugin, do NOT ask questions: pick sensible defaults (Paper API, latest Minecraft version unless they name one, Java 21) and output the COMPLETE project immediately, nothing missing:
+- pom.xml: Maven, maven.compiler.release 21, UTF-8, Paper repository https://repo.papermc.io/repository/maven-public/, dependency io.papermc.paper:paper-api:<mcversion>-R0.1-SNAPSHOT with scope provided (add other plugin APIs only when really needed), finalName set to the plugin name, resources filtering on.
+- src/main/resources/plugin.yml (name, version, main, api-version, commands/permissions) and config.yml / messages when useful.
+- All Java classes under src/main/java/<package>/ with full code and every import. Code MUST compile: use only Paper/Bukkit/Adventure APIs you are sure exist, no NMS or reflection hacks, no placeholder/TODO bodies, register commands and listeners in onEnable, save default config, handle null and permission checks. Use Adventure (Component, MiniMessage) for text.
+Each file goes in its own fenced block with the file marker on the first line. Keep the reply to the files plus at most 3 short lines (commands, permissions, how to configure). The app compiles the .jar automatically; if it reports compile errors, fix them and resend ALL files in full.`,
+  },
+  {
     slug: 'file-reading', name: 'Reading & summarizing documents', enabled: 0,
     description: 'Careful reading of pasted text, tables and data.',
     instructions: `When the user pastes a document, log, table, CSV or JSON: first state what it is and its size/shape, then answer from the actual content with quotes or row references. For long inputs, give a structured summary (purpose, key points, notable numbers, anomalies) before details. For tabular data, check for missing values and inconsistent formats and mention them. Never claim to have read content that was not provided.`,
@@ -174,7 +183,7 @@ for (const s of DEFAULT_SKILLS) insSkill.run(s.slug, s.name, s.description, s.in
 // give built-in skills a nicer icon (only while they still have the default)
 const ICONS = { coding: '⌘', concise: '✂', writer: '✎', 'deep-research': '🔎', 'frontend-design': '🎨', dataviz: '📊', 'ux-copy': '💬',
   'design-critique': '🧐', 'accessibility-review': '♿', 'design-system': '🧩', 'research-synthesis': '🧪', 'user-research': '🗣',
-  'docs-writer': '📄', 'skill-creator': '🛠', 'knowledge-base': '📚', sysadmin: '⌨', 'file-reading': '📑' };
+  'docs-writer': '📄', 'skill-creator': '🛠', 'knowledge-base': '📚', sysadmin: '⌨', 'mc-plugin': '⛏', 'file-reading': '📑' };
 for (const [slug, icon] of Object.entries(ICONS)) db.prepare("UPDATE skills SET icon=? WHERE slug=? AND icon='✦'").run(icon, slug);
 
 const getSetting = (k, d = '') => {

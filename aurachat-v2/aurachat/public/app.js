@@ -43,7 +43,7 @@ const ico = (n, cls = 'w-4 h-4') => `<span class="inline-flex ${cls}">${ICONS[n]
 const st = {
   appName: 'AuraChat', convs: [], cur: null, messages: [], models: [], model: null, keys: {}, config: { providers: {} },
   skills: [], activeSkillId: 0, streaming: false, abort: null, pending: [], search: '',
-  opts: { effort: '', webSearch: false, connectors: true, style: 'normal', temperature: 1, maxTokens: 8192 },
+  opts: { effort: '', webSearch: false, connectors: true, autoBuild: true, style: 'normal', temperature: 1, maxTokens: 8192 },
   artifacts: [], curArtifact: -1, artTab: 'preview', curStarred: false,
 };
 try { Object.assign(st.opts, JSON.parse(localStorage.getItem('aura_opts') || '{}')); } catch {}
@@ -158,14 +158,33 @@ function makeZip(files) { // stored (no compression) zip, no dependencies
   const e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
   return new Blob([...parts, ...central, e.buffer], { type: 'application/zip' });
 }
-async function buildJar(list, btn) {
-  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Building…'; toast('Building .jar — can take a few minutes the first time');
+async function buildJar(list, btn, { auto = false } = {}) {
+  const card = btn.closest('.filecard'); card.querySelector('.buildout')?.remove();
+  const old = btn.textContent; btn.disabled = true; btn.textContent = 'Building…';
+  const out = document.createElement('div'); out.className = 'buildout mx-3 mb-3 p-2.5 text-xs rounded-xl border border-claude-borderLight dark:border-claude-borderDark'; out.textContent = auto ? '⚙ Compiling your plugin… (first build downloads dependencies, can take a few minutes)' : 'Compiling…'; card.appendChild(out);
+  let res = { ok: false, log: '' };
   try {
-    const r = await api('/build', { method: 'POST', body: { files: list } });
-    if (r.ok) { const bin = atob(r.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); saveBlob(new Blob([u8], { type: 'application/java-archive' }), r.name); toast('Built ' + r.name); }
-    else { const w = document.createElement('div'); w.className = 'mt-2 p-3 text-xs font-mono whitespace-pre-wrap rounded-xl bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300 border border-red-300/60 dark:border-red-900/60'; w.textContent = 'Build failed:\n' + r.log; btn.closest('.filecard').appendChild(w); }
-  } catch (e) { toast(e.message); }
+    res = await api('/build', { method: 'POST', body: { files: list } });
+    if (res.ok) {
+      const bin = atob(res.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const blob = new Blob([u8], { type: 'application/java-archive' });
+      out.innerHTML = `<div class="flex items-center gap-3"><span class="flex-1 min-w-0 truncate">✓ Built <b>${esc(res.name)}</b> · ${(res.size / 1024).toFixed(0)} KB</span><button type="button" class="px-3 py-1 rounded-lg bg-claude-accent text-white font-semibold">Download .jar</button></div>`;
+      $('button', out).onclick = () => saveBlob(blob, res.name);
+      saveBlob(blob, res.name);
+    } else { out.className += ' font-mono whitespace-pre-wrap text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30'; out.textContent = 'Build failed:\n' + res.log; }
+  } catch (e) { res = { ok: false, log: e.message }; out.textContent = e.message; }
   btn.disabled = false; btn.textContent = old;
+  return res;
+}
+async function autoBuildLast() {
+  const zc = $('#messages-container').lastElementChild?.querySelector?.('.zipcard');
+  if (!zc?._buildBtn) return;
+  const res = await buildJar(zc._list, zc._buildBtn, { auto: true });
+  if (!res.ok && /Build tool missing|Nothing to build/.test(res.log || '')) return;
+  if (!res.ok && (st.fixTries || 0) < 2 && !st.streaming) {
+    st.fixTries = (st.fixTries || 0) + 1;
+    runChat({ auto: true, text: `The build failed with these errors. Fix them and resend ALL files in full:\n\n\`\`\`\n${(res.log || '').slice(-2500)}\n\`\`\`` });
+  }
 }
 function saveBlob(blob, name) { const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
 function uniqueNames(files) { const seen = {}; return files.map((f) => { let n = f.name.replace(/^\/+/, '').replace(/\.\.\//g, ''); if (seen[n]) { const i = n.lastIndexOf('.'); n = i > 0 ? `${n.slice(0, i)}-${seen[n]}${n.slice(i)}` : `${n}-${seen[n]}`; } seen[n] = (seen[n] || 0) + 1; return { name: n, text: f.text }; }); }
@@ -224,7 +243,7 @@ function enhance(el, finalize) {
     z.innerHTML = `<div class="filehead"><span class="fileicon">${ico('file', 'w-4 h-4')}</span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">Project files (.zip)</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark truncate">${list.length} files · ${esc(list.map((f) => f.name.split('/').pop()).slice(0, 4).join(', '))}${list.length > 4 ? '…' : ''}</span></span><button type="button" class="primary">Download all</button></div>`;
     const hasBuild = list.some((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?)$/.test(f.name) || f.name.endsWith('.java'));
     const head = $('.filehead', z);
-    if (hasBuild) { const bb = document.createElement('button'); bb.type = 'button'; bb.textContent = 'Build .jar'; head.insertBefore(bb, $('button', z)); bb.onclick = () => buildJar(list, bb); }
+    if (hasBuild) { const bb = document.createElement('button'); bb.type = 'button'; bb.textContent = 'Build .jar'; head.insertBefore(bb, $('button', z)); bb.onclick = () => buildJar(list, bb); z._buildBtn = bb; z._list = list; }
     $('button.primary', z).onclick = () => saveBlob(makeZip(list), 'project.zip');
     el.appendChild(z);
   }
@@ -432,10 +451,11 @@ function setSending(on) {
   st.streaming = on;
   $('#send-btn').classList.toggle('hidden', on); $('#stop-btn').classList.toggle('hidden', !on); $('#stop-btn').classList.toggle('flex', on);
 }
-async function runChat({ text = '', regenerate = false, editId = null, images = [], files = [], keepAttachments = false }) {
+async function runChat({ auto = false, text = '', regenerate = false, editId = null, images = [], files = [], keepAttachments = false }) {
   if (st.streaming) return;
   if (!st.model) return toast('No model selected. Add an API key in Settings.');
   const wasNew = !st.cur;
+  if (!auto) st.fixTries = 0;
   if (!regenerate) {
     const userMsg = { role: 'user', content: text.trim() };
     if (keepAttachments) { userMsg.images = images; userMsg.files = files; }
@@ -508,6 +528,7 @@ async function runChat({ text = '', regenerate = false, editId = null, images = 
   }
   if (st.artifacts.length && acc.trim()) openArtifact(st.artifacts.length - 1);
   scrollDown(true); loadConvs(); void wasNew;
+  if (!err && acc.trim() && st.opts.autoBuild !== false) autoBuildLast();
 }
 
 // ---------------------------------------------------------------- attachments
@@ -570,6 +591,7 @@ function renderStyleOptions() {
   $$('#style-options button').forEach((b) => (b.onclick = () => { st.opts.style = b.dataset.s; saveOpts(); renderStyleOptions(); }));
 }
 $('#opt-websearch').onchange = (e) => { st.opts.webSearch = e.target.checked; saveOpts(); };
+$('#opt-autobuild').onchange = (e) => { st.opts.autoBuild = e.target.checked; saveOpts(); };
 $('#opt-connectors').onchange = (e) => { st.opts.connectors = e.target.checked; saveOpts(); };
 $('#opt-temp').oninput = (e) => { st.opts.temperature = Number(e.target.value); $('#opt-temp-label').textContent = Number(e.target.value).toFixed(1); saveOpts(); };
 const EFFORTS = [['', 'Off'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['max', 'Max']];
@@ -581,7 +603,7 @@ function updateThinkingPill() {
   const on = !!st.opts.effort, btn = $('#thinking-toggle-btn');
   $('#thinking-status-text').textContent = on ? EFFORTS.find((e) => e[0] === st.opts.effort)[1] : 'Off';
   btn.classList.toggle('text-claude-accent', on); btn.classList.toggle('border-claude-accent/60', on);
-  $('#opt-websearch').checked = !!st.opts.webSearch; $('#opt-connectors').checked = st.opts.connectors !== false; $('#opt-temp').value = st.opts.temperature; $('#opt-temp-label').textContent = Number(st.opts.temperature).toFixed(1);
+  $('#opt-websearch').checked = !!st.opts.webSearch; $('#opt-connectors').checked = st.opts.connectors !== false; $('#opt-autobuild').checked = st.opts.autoBuild !== false; $('#opt-temp').value = st.opts.temperature; $('#opt-temp-label').textContent = Number(st.opts.temperature).toFixed(1);
 }
 
 // ---------------------------------------------------------------- models
