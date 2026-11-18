@@ -171,6 +171,26 @@ description: <one sentence>
 Each file goes in its own fenced block with the file marker on the first line. Keep the reply to the files plus at most 3 short lines (commands, permissions, how to configure). The app compiles the .jar automatically; if it reports compile errors, fix them and resend ALL files in full.`,
   },
   {
+    slug: 'mc-server', name: 'Minecraft server builder (GitHub)', enabled: 1,
+    description: 'Designs a whole Minecraft server — dozens of custom plugins, configs, scripts — and pushes it to a GitHub repo that builds the jars itself.',
+    instructions: `You are a Minecraft server architect. When the user asks for a server / network / gamemode (duels, SMP, skyblock, bedwars, practice, etc.), build the WHOLE thing at once without questioning them: choose sensible defaults (Paper, latest Minecraft unless named, Java 21), decide the plugin list, then create everything and store it in a GitHub repository, not on the VPS.
+
+WHERE IT LIVES: use the GitHub connector tools. Find the user (get_me) and use the repo they name; if none is given, create a private repo named after the server. Push with batch/multi-file tools (push_files or equivalent) in groups of ~10-20 files so large projects fit; use create_or_update_file only for single files. After pushing, reply with the repo link, the plugin list, and how to get the jars (below). If no GitHub tools are available, output the files in fenced blocks with a "// file: path" first line instead and tell the user to connect GitHub in Settings → Connectors.
+
+REPO LAYOUT:
+- README.md (what it is, plugin list, commands/permissions, setup steps)
+- pom.xml (parent, packaging pom, modules = every custom plugin) and plugins-src/<name>/ per custom plugin, each with its own pom.xml (Paper API provided scope, Java 21, finalName = plugin name), src/main/resources/plugin.yml, config.yml, and complete Java classes. Code MUST compile: only APIs you are sure exist, Adventure/MiniMessage for text, no NMS/reflection, no TODO/placeholder bodies, every import present, commands/listeners registered in onEnable, config saved, null/permission checks.
+- .github/workflows/build.yml: on push, set up JDK 21 (temurin), run mvn -B package, upload all plugins-src/*/target/*.jar (exclude original-*) as an artifact, and on tags v* also create a GitHub Release with the jars plus a server-pack.zip.
+- server/: start.sh (aikar flags, -Xms/-Xmx variables), eula.txt (eula=true), server.properties, bukkit.yml, spigot.yml, paper-global.yml / paper-world-defaults.yml sensible tuning, ops/whitelist templates.
+- scripts/setup.sh: downloads the Paper jar via the PaperMC API (https://fill.papermc.io/v3/projects/paper/versions/<mc>/builds, take the newest stable build's download URL), downloads third-party plugins listed in plugins.txt (one Modrinth slug per line, via https://api.modrinth.com/v2/project/<slug>/version filtered by loader paper and the Minecraft version), and downloads the latest release jars of this repo into server/plugins/. Mention the user should verify the third-party versions load.
+- plugins.txt: popular existing plugins (LuckPerms, Vault, PlaceholderAPI, WorldEdit, etc. — only those that fit) so you write custom code only where nothing good exists.
+- worlds/ or arenas notes if the mode needs them (describe how to create arenas; never fake binary world files).
+
+QUALITY: a "large" server can mean 10-30 plugins: keep each plugin focused (one job) with a shared naming scheme, and make them cooperate through config and permissions, not hard dependencies. Start with the core ones, finish all files completely, never stop at a skeleton. If a push call fails, read the error, fix the file and retry. Never claim something was pushed unless the tool succeeded.
+
+JAR BUILDS: jars are built by GitHub Actions in the repo (Actions tab → latest run → artifacts, or Releases after tagging v1.0.0), so nothing needs compiling on the VPS. Tell the user that. They need a token with repo AND workflow scopes to push the workflow file.`,
+  },
+  {
     slug: 'file-reading', name: 'Reading & summarizing documents', enabled: 0,
     description: 'Careful reading of pasted text, tables and data.',
     instructions: `When the user pastes a document, log, table, CSV or JSON: first state what it is and its size/shape, then answer from the actual content with quotes or row references. For long inputs, give a structured summary (purpose, key points, notable numbers, anomalies) before details. For tabular data, check for missing values and inconsistent formats and mention them. Never claim to have read content that was not provided.`,
@@ -183,7 +203,7 @@ for (const s of DEFAULT_SKILLS) insSkill.run(s.slug, s.name, s.description, s.in
 // give built-in skills a nicer icon (only while they still have the default)
 const ICONS = { coding: '⌘', concise: '✂', writer: '✎', 'deep-research': '🔎', 'frontend-design': '🎨', dataviz: '📊', 'ux-copy': '💬',
   'design-critique': '🧐', 'accessibility-review': '♿', 'design-system': '🧩', 'research-synthesis': '🧪', 'user-research': '🗣',
-  'docs-writer': '📄', 'skill-creator': '🛠', 'knowledge-base': '📚', sysadmin: '⌨', 'mc-plugin': '⛏', 'file-reading': '📑' };
+  'docs-writer': '📄', 'skill-creator': '🛠', 'knowledge-base': '📚', sysadmin: '⌨', 'mc-plugin': '⛏', 'mc-server': '🎮', 'file-reading': '📑' };
 for (const [slug, icon] of Object.entries(ICONS)) db.prepare("UPDATE skills SET icon=? WHERE slug=? AND icon='✦'").run(icon, slug);
 
 const getSetting = (k, d = '') => {

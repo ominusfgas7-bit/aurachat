@@ -742,7 +742,7 @@ function switchSettingsTab(t) {
   if (t === 'connectors' && !st.conns) loadConnectors();
 }
 // ---- connectors (MCP) ----
-const GH_PRESET = { name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', filter: 'file,repositor,branch,commit,search_code,push,pull_request,get_me', enabled: true, readOnly: false };
+const GH_PRESET = { name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', filter: 'file,repositor,branch,commit,search_code,push,pull_request,get_me,release,tag,workflow', enabled: true, readOnly: false };
 async function loadConnectors() { try { st.conns = (await api('/connectors')).connectors; } catch { st.conns = []; } renderConnectors(); }
 function addConnector(kind) { st.conns = st.conns || []; syncConnectorInputs(); st.conns.push(kind === 'github' ? { ...GH_PRESET } : { name: 'My MCP server', url: '', filter: '', enabled: true, readOnly: false }); renderConnectors(); }
 function syncConnectorInputs() {

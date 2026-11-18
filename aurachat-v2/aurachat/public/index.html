@@ -409,7 +409,7 @@
       </div>
 
       <div id="stab-connectors" class="hidden p-5 sm:p-6 overflow-y-auto space-y-4 text-sm">
-        <p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark leading-relaxed">Connect MCP servers so the model can use your accounts: read repos, create and push files, open PRs. For GitHub, make a token at github.com/settings/tokens (scope <span class="font-mono">repo</span>) and paste it below. Tool calling needs a model that supports it (Claude models usually do).</p>
+        <p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark leading-relaxed">Connect MCP servers so the model can use your accounts: read repos, create and push files, open PRs. For GitHub, make a token at github.com/settings/tokens (scopes <span class="font-mono">repo</span> + <span class="font-mono">workflow</span>) and paste it below. Tool calling needs a model that supports it (Claude models usually do).</p>
         <div id="conn-list" class="space-y-3"></div>
         <div class="flex flex-wrap gap-2">
           <button type="button" onclick="addConnector('github')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-claude-accent text-white hover:bg-claude-accentHover">+ GitHub</button>

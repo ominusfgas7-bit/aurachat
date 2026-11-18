@@ -81,7 +81,7 @@ function openaiMessages(messages) {
 }
 
 // ---------- Anthropic Messages protocol (works for api.anthropic.com and compatible gateways) ----------
-const MAX_ROUNDS = 10; // max tool-use rounds per reply
+const MAX_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || '40', 10); // max tool-use rounds per reply
 async function runTools(ts, calls, signal) {
   const out = [];
   for (const c of calls) {
