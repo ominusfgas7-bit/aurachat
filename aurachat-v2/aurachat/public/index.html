@@ -69,6 +69,15 @@
     @keyframes pulseCursor { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
     .spin-slow { animation: spinSlow 6s linear infinite; } @keyframes spinSlow { to { transform: rotate(360deg); } }
     .modal-backdrop { animation: fadeIn .15s ease-out; } @keyframes fadeIn { from { opacity: 0; } }
+    .filecard { margin: 1rem 0; border-radius: .9rem; border: 1px solid rgba(130,125,115,.3); overflow: hidden; }
+    .filehead { display: flex; align-items: center; gap: .65rem; padding: .65rem .8rem; }
+    .fileicon { width: 2.25rem; height: 2.25rem; border-radius: .7rem; display: flex; align-items: center; justify-content: center; background: rgba(217,119,87,.15); color: #D97757; flex: none; }
+    .filehead button { font-size: 12px; padding: .3rem .65rem; border-radius: .6rem; border: 1px solid rgba(130,125,115,.35); background: transparent; color: inherit; cursor: pointer; }
+    .filehead button:hover { background: rgba(130,125,115,.12); }
+    .filehead button.primary { background: #D97757; border-color: #D97757; color: #fff; }
+    .filehead button.primary:hover { background: #c4623f; }
+    .filebody { max-height: 420px; overflow: auto; background: #1C1B1A; border-top: 1px solid rgba(255,255,255,.08); }
+    .filebody pre { margin: 0; } .filebody pre code { color: #E8E6E1; display: block; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: .8rem; line-height: 1.55; background: transparent !important; }
     .artifact-card { display: flex; align-items: center; gap: .75rem; width: 100%; text-align: left; margin: 1rem 0; padding: .7rem .9rem; border-radius: .9rem; border: 1px solid rgba(130,125,115,.3); transition: border-color .15s, background .15s; }
     .artifact-card:hover { border-color: #D97757; background: rgba(217,119,87,.06); }
     .sb-collapsed #sidebar { display: none; }
@@ -219,6 +228,10 @@
                   <span class="flex items-center gap-2.5"><span data-i="globe" class="w-4 h-4 text-claude-mutedLight dark:text-claude-mutedDark"></span><span class="font-medium">Web search</span></span>
                   <label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="opt-websearch" class="sr-only peer"><span class="w-9 h-5 rounded-full bg-claude-borderLight dark:bg-claude-borderDark peer-checked:bg-claude-accent transition relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span></label>
                 </div>
+                <div class="flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5">
+                  <span class="flex items-center gap-2.5"><span data-i="file" class="w-4 h-4 text-claude-mutedLight dark:text-claude-mutedDark"></span><span class="font-medium">Connectors (GitHub…)</span></span>
+                  <label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="opt-connectors" class="sr-only peer"><span class="w-9 h-5 rounded-full bg-claude-borderLight dark:bg-claude-borderDark peer-checked:bg-claude-accent transition relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4"></span></label>
+                </div>
                 <div class="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark">Response style</div>
                 <div id="style-options" class="px-1 pb-1 grid grid-cols-3 gap-1"></div>
                 <div class="px-2.5 pt-2 pb-1 flex justify-between text-[10px] font-semibold uppercase tracking-wider text-claude-mutedLight dark:text-claude-mutedDark"><span>Temperature</span><span id="opt-temp-label" class="font-mono normal-case">1.0</span></div>
@@ -355,6 +368,7 @@
         <div class="flex items-center gap-5">
           <button id="stab-btn-providers" onclick="switchSettingsTab('providers')" class="pb-2.5 text-sm font-semibold border-b-2 transition">API &amp; Providers</button>
           <button id="stab-btn-general" onclick="switchSettingsTab('general')" class="pb-2.5 text-sm font-semibold border-b-2 transition">General</button>
+          <button id="stab-btn-connectors" onclick="switchSettingsTab('connectors')" class="pb-2.5 text-sm font-semibold border-b-2 transition">Connectors</button>
         </div>
         <button onclick="closeModal('settings-modal')" class="p-1.5 mb-1.5 rounded-lg text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5"><span data-i="close" class="block w-5 h-5"></span></button>
       </div>
@@ -388,6 +402,16 @@
           <div class="flex gap-2"><button type="button" onclick="testProvider('openrouter')" id="test-openrouter" class="px-3 py-1.5 rounded-xl bg-claude-accent/15 text-claude-accent hover:bg-claude-accent/25 text-xs font-semibold transition">Test</button><button type="button" onclick="clearKey('openrouterKey')" class="px-3 py-1.5 rounded-xl text-xs text-claude-mutedLight dark:text-claude-mutedDark hover:bg-black/5 dark:hover:bg-white/5">Remove key</button></div>
         </section>
         <p class="text-[11px] text-claude-mutedLight dark:text-claude-mutedDark">Keys are stored on your server and never sent back to the browser.</p>
+      </div>
+
+      <div id="stab-connectors" class="hidden p-5 sm:p-6 overflow-y-auto space-y-4 text-sm">
+        <p class="text-xs text-claude-mutedLight dark:text-claude-mutedDark leading-relaxed">Connect MCP servers so the model can use your accounts: read repos, create and push files, open PRs. For GitHub, make a token at github.com/settings/tokens (scope <span class="font-mono">repo</span>) and paste it below. Tool calling needs a model that supports it (Claude models usually do).</p>
+        <div id="conn-list" class="space-y-3"></div>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" onclick="addConnector('github')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-claude-accent text-white hover:bg-claude-accentHover">+ GitHub</button>
+          <button type="button" onclick="addConnector('custom')" class="px-3 py-1.5 rounded-xl text-xs font-medium border border-claude-borderLight dark:border-claude-borderDark hover:bg-black/5 dark:hover:bg-white/5">+ Custom MCP server</button>
+          <button type="button" onclick="saveConnectors()" class="px-3 py-1.5 rounded-xl text-xs font-semibold border border-claude-accent text-claude-accent hover:bg-claude-accent/10 ml-auto">Save connectors</button>
+        </div>
       </div>
 
       <div id="stab-general" class="hidden p-5 sm:p-6 overflow-y-auto space-y-4 text-sm">

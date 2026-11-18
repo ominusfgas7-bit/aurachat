@@ -43,7 +43,7 @@ const ico = (n, cls = 'w-4 h-4') => `<span class="inline-flex ${cls}">${ICONS[n]
 const st = {
   appName: 'AuraChat', convs: [], cur: null, messages: [], models: [], model: null, keys: {}, config: { providers: {} },
   skills: [], activeSkillId: 0, streaming: false, abort: null, pending: [], search: '',
-  opts: { effort: '', webSearch: false, style: 'normal', temperature: 1, maxTokens: 8192 },
+  opts: { effort: '', webSearch: false, connectors: true, style: 'normal', temperature: 1, maxTokens: 8192 },
   artifacts: [], curArtifact: -1, artTab: 'preview', curStarred: false,
 };
 try { Object.assign(st.opts, JSON.parse(localStorage.getItem('aura_opts') || '{}')); } catch {}
@@ -118,6 +118,10 @@ $('#loginForm').onsubmit = async (e) => {
 async function logout() { await api('/logout', { method: 'POST' }).catch(() => {}); location.reload(); }
 
 // ---------------------------------------------------------------- markdown / code / artifacts
+function hideOpenFence(t) {
+  const m = [...t.matchAll(/^```/gm)]; if (m.length % 2 === 0) return t;
+  return t.slice(0, m.at(-1).index) + '\n\n*Writing code…*';
+}
 function renderMd(text) {
   if (!window.marked) return `<p>${esc(text).replace(/\n/g, '<br>')}</p>`;
   const html = marked.parse(text, { gfm: true, breaks: false });
@@ -134,27 +138,84 @@ function artifactTitle(lang, code) {
   const t = m ? m[1].replace(/<[^>]+>/g, '').trim() : '';
   return t.slice(0, 60) || (lang === 'svg' ? 'SVG image' : 'HTML page');
 }
+const EXT = { javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', java: 'java', yaml: 'yml', yml: 'yml', json: 'json', html: 'html', css: 'css', bash: 'sh', sh: 'sh', shell: 'sh', xml: 'xml', markdown: 'md', md: 'md', sql: 'sql', kotlin: 'kt', go: 'go', rust: 'rs', c: 'c', cpp: 'cpp', php: 'php', lua: 'lua', properties: 'properties', toml: 'toml', ini: 'ini', bat: 'bat', powershell: 'ps1', gradle: 'gradle', svg: 'svg', txt: 'txt' };
+const FILE_MARK = /^\s*(?:\/\/|#|--|;|\/\*|<!--)\s*(?:file(?:name)?|path)\s*[:=]\s*([^\s*]+?)\s*(?:\*\/|-->)?\s*(?:\r?\n|$)/i;
+function crc32(buf) {
+  if (!crc32.t) { crc32.t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc32.t[n] = c >>> 0; } }
+  let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = crc32.t[(c ^ buf[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0;
+}
+function makeZip(files) { // stored (no compression) zip, no dependencies
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const d = new Date(), dt = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xffff, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xffff;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30)); h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true); h.setUint16(10, dt, true); h.setUint16(12, dd, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(h.buffer, name, data);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true); c.setUint16(12, dt, true); c.setUint16(14, dd, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(c.buffer, name); off += 30 + name.length + data.length;
+  }
+  const csize = central.reduce((n, p) => n + (p.byteLength ?? p.length), 0);
+  const e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...central, e.buffer], { type: 'application/zip' });
+}
+function saveBlob(blob, name) { const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000); }
+function uniqueNames(files) { const seen = {}; return files.map((f) => { let n = f.name.replace(/^\/+/, '').replace(/\.\.\//g, ''); if (seen[n]) { const i = n.lastIndexOf('.'); n = i > 0 ? `${n.slice(0, i)}-${seen[n]}${n.slice(i)}` : `${n}-${seen[n]}`; } seen[n] = (seen[n] || 0) + 1; return { name: n, text: f.text }; }); }
 function enhance(el, finalize) {
+  const files = [];
   $$('pre', el).forEach((pre) => {
-    if (pre.parentElement.classList.contains('codewrap') || pre.closest('.artifact-card')) return;
+    if (pre.closest('.codewrap, .filecard, .artifact-card')) return;
     const code = pre.querySelector('code');
-    const lang = ((code?.className || '').match(/language-([\w+-]+)/) || [])[1] || '';
-    const text = code ? code.textContent : pre.textContent;
+    const info = ((code?.className || '').match(/language-(\S+)/) || [])[1] || '';
+    let [lang, infoName] = info.split(':'); lang = (lang || '').toLowerCase();
+    let text = code ? code.textContent : pre.textContent;
+    let name = infoName || '';
+    const mk = text.match(FILE_MARK);
+    if (mk) { name = mk[1]; text = text.slice(mk[0].length); }
+    text = text.replace(/\n$/, '');
+    const nlines = text ? text.split('\n').length : 0;
     if (finalize && (lang === 'html' || lang === 'svg') && isArtifact(lang, text)) {
-      const idx = st.artifacts.push({ lang, code: text, title: artifactTitle(lang, text) }) - 1;
-      const card = document.createElement('button');
-      card.className = 'artifact-card'; card.type = 'button'; card.dataset.aid = idx;
+      const idx = st.artifacts.push({ lang, code: text, title: name || artifactTitle(lang, text) }) - 1;
+      files.push({ name: name || `${artifactTitle(lang, text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page'}.${lang}`, text });
+      const card = document.createElement('div'); card.className = 'artifact-card'; card.dataset.aid = idx;
       card.innerHTML = `<span class="w-9 h-9 rounded-xl bg-claude-accent/15 text-claude-accent flex items-center justify-center font-mono text-xs shrink-0">&lt;/&gt;</span>
-        <span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">${esc(st.artifacts[idx].title)}</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark uppercase font-mono">${lang} · click to open</span></span>`;
-      card.onclick = () => openArtifact(idx);
+        <span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">${esc(st.artifacts[idx].title)}</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark uppercase font-mono">${lang} · click to open</span></span>
+        <button type="button" data-dl class="px-2.5 py-1 rounded-lg text-xs border border-claude-borderLight dark:border-claude-borderDark hover:bg-black/5 dark:hover:bg-white/5">Download</button>`;
+      card.style.cursor = 'pointer'; card.onclick = (e) => { if (e.target.closest('[data-dl]')) saveBlob(new Blob([text], { type: 'text/html' }), files.at(-1)?.name || `page.${lang}`); else openArtifact(idx); };
+      const fn = files.at(-1).name; card.querySelector('[data-dl]').onclick = (e) => { e.stopPropagation(); saveBlob(new Blob([text], { type: 'text/plain' }), fn); };
       pre.replaceWith(card); return;
     }
-    if (window.hljs && code) { try { hljs.highlightElement(code); } catch {} }
-    const wrap = document.createElement('div'); wrap.className = 'codewrap';
-    wrap.innerHTML = `<div class="codehead"><span>${esc(lang || 'code')}</span><button type="button">Copy</button></div>`;
-    pre.replaceWith(wrap); wrap.appendChild(pre);
-    $('button', wrap).onclick = async (e) => { await clip(text); e.target.textContent = 'Copied'; setTimeout(() => (e.target.textContent = 'Copy'), 1500); };
+    const isFile = !!name || nlines >= 12;
+    if (!isFile) { // short snippet stays inline
+      if (window.hljs && code && finalize) { try { hljs.highlightElement(code); } catch {} }
+      const wrap = document.createElement('div'); wrap.className = 'codewrap';
+      wrap.innerHTML = `<div class="codehead"><span>${esc(lang || 'code')}</span><button type="button">Copy</button></div>`;
+      pre.replaceWith(wrap); wrap.appendChild(pre);
+      $('button', wrap).onclick = async (e) => { await clip(text); e.target.textContent = 'Copied'; setTimeout(() => (e.target.textContent = 'Copy'), 1500); };
+      return;
+    }
+    const fname = name || `code.${EXT[lang] || lang || 'txt'}`;
+    files.push({ name: fname, text });
+    const card = document.createElement('div'); card.className = 'filecard';
+    card.innerHTML = `<div class="filehead"><span class="fileicon">${ico('file', 'w-4 h-4')}</span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">${esc(fname)}</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark">${esc((lang || 'text').toUpperCase())} · ${nlines} ${nlines === 1 ? 'line' : 'lines'}</span></span>
+      <button type="button" data-a="view">View</button><button type="button" data-a="copy">Copy</button><button type="button" data-a="dl" class="primary">Download</button></div><div class="filebody hidden"></div>`;
+    card.onclick = async (e) => {
+      const k = e.target.closest('button')?.dataset.a; if (!k) return;
+      if (k === 'dl') saveBlob(new Blob([text], { type: 'text/plain' }), fname.split('/').pop());
+      else if (k === 'copy') { await clip(text); toast('Copied'); }
+      else if (k === 'view') {
+        const body = $('.filebody', card), btn = e.target.closest('button');
+        if (!body.firstChild) { const p = document.createElement('pre'), c = document.createElement('code'); if (lang) c.className = 'language-' + lang; c.textContent = text; p.appendChild(c); body.appendChild(p); if (window.hljs) { try { hljs.highlightElement(c); } catch {} } }
+        body.classList.toggle('hidden'); btn.textContent = body.classList.contains('hidden') ? 'View' : 'Hide';
+      }
+    };
+    pre.replaceWith(card);
   });
+  if (finalize && files.filter((f) => f.name.includes('.')).length >= 2) {
+    const list = uniqueNames(files), z = document.createElement('div'); z.className = 'filecard zipcard';
+    z.innerHTML = `<div class="filehead"><span class="fileicon">${ico('file', 'w-4 h-4')}</span><span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">Project files (.zip)</span><span class="block text-[11px] text-claude-mutedLight dark:text-claude-mutedDark truncate">${list.length} files · ${esc(list.map((f) => f.name.split('/').pop()).slice(0, 4).join(', '))}${list.length > 4 ? '…' : ''}</span></span><button type="button" class="primary">Download all</button></div>`;
+    $('button', z).onclick = () => saveBlob(makeZip(list), 'project.zip');
+    el.appendChild(z);
+  }
   updateArtifactBadge();
 }
 function updateArtifactBadge() {
@@ -384,7 +445,7 @@ async function runChat({ text = '', regenerate = false, editId = null, images = 
   const ac = (st.abort = new AbortController());
   let acc = '', thinking = '', err = null, raf = 0;
   const paint = () => {
-    raf = 0; md.innerHTML = renderMd(acc);
+    raf = 0; md.innerHTML = renderMd(hideOpenFence(acc)); enhance(md, false);
     if (thinking) {
       if (!slot.firstChild) slot.innerHTML = thinkHtml('', !acc);
       const det = slot.firstChild; $('.tt', det).textContent = thinking;
@@ -399,7 +460,7 @@ async function runChat({ text = '', regenerate = false, editId = null, images = 
       body: JSON.stringify({
         conversationId: st.cur, message: text, model: st.model, regenerate, editMessageId: editId, style: o.style, skillId: st.activeSkillId,
         images: keepAttachments ? [] : images.map((i) => ({ mime: i.mime, data: i.data })), files: keepAttachments ? [] : files.map((f) => ({ name: f.name, text: f.text })),
-        options: { effort: o.effort || undefined, webSearch: o.webSearch, temperature: Number(o.temperature), maxTokens: Number(o.maxTokens) },
+        options: { effort: o.effort || undefined, webSearch: o.webSearch, connectors: o.connectors !== false, temperature: Number(o.temperature), maxTokens: Number(o.maxTokens) },
       }),
     });
     if (r.status === 401) { showLogin(); throw new Error('Not logged in'); }
@@ -497,6 +558,7 @@ function renderStyleOptions() {
   $$('#style-options button').forEach((b) => (b.onclick = () => { st.opts.style = b.dataset.s; saveOpts(); renderStyleOptions(); }));
 }
 $('#opt-websearch').onchange = (e) => { st.opts.webSearch = e.target.checked; saveOpts(); };
+$('#opt-connectors').onchange = (e) => { st.opts.connectors = e.target.checked; saveOpts(); };
 $('#opt-temp').oninput = (e) => { st.opts.temperature = Number(e.target.value); $('#opt-temp-label').textContent = Number(e.target.value).toFixed(1); saveOpts(); };
 const EFFORTS = [['', 'Off'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['max', 'Max']];
 function renderEffort() {
@@ -507,7 +569,7 @@ function updateThinkingPill() {
   const on = !!st.opts.effort, btn = $('#thinking-toggle-btn');
   $('#thinking-status-text').textContent = on ? EFFORTS.find((e) => e[0] === st.opts.effort)[1] : 'Off';
   btn.classList.toggle('text-claude-accent', on); btn.classList.toggle('border-claude-accent/60', on);
-  $('#opt-websearch').checked = !!st.opts.webSearch; $('#opt-temp').value = st.opts.temperature; $('#opt-temp-label').textContent = Number(st.opts.temperature).toFixed(1);
+  $('#opt-websearch').checked = !!st.opts.webSearch; $('#opt-connectors').checked = st.opts.connectors !== false; $('#opt-temp').value = st.opts.temperature; $('#opt-temp-label').textContent = Number(st.opts.temperature).toFixed(1);
 }
 
 // ---------------------------------------------------------------- models
@@ -642,9 +704,44 @@ function importSkillDialog() {
 function openSettingsModal(tab) { fillSettings(); openModal('settings-modal'); switchSettingsTab(tab || 'providers'); }
 function switchSettingsTab(t) {
   const on = 'border-claude-accent text-claude-accent', off = 'border-transparent text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-textLight dark:hover:text-claude-textDark';
-  $('#stab-btn-providers').className = `pb-2.5 text-sm font-semibold border-b-2 transition ${t === 'providers' ? on : off}`;
-  $('#stab-btn-general').className = `pb-2.5 text-sm font-semibold border-b-2 transition ${t === 'general' ? on : off}`;
-  $('#stab-providers').classList.toggle('hidden', t !== 'providers'); $('#stab-general').classList.toggle('hidden', t !== 'general');
+  for (const k of ['providers', 'general', 'connectors']) { $('#stab-btn-' + k).className = `pb-2.5 text-sm font-semibold border-b-2 transition ${t === k ? on : off}`; $('#stab-' + k).classList.toggle('hidden', t !== k); }
+  if (t === 'connectors' && !st.conns) loadConnectors();
+}
+// ---- connectors (MCP) ----
+const GH_PRESET = { name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', filter: 'file,repositor,branch,commit,search_code,push,pull_request,get_me', enabled: true, readOnly: false };
+async function loadConnectors() { try { st.conns = (await api('/connectors')).connectors; } catch { st.conns = []; } renderConnectors(); }
+function addConnector(kind) { st.conns = st.conns || []; syncConnectorInputs(); st.conns.push(kind === 'github' ? { ...GH_PRESET } : { name: 'My MCP server', url: '', filter: '', enabled: true, readOnly: false }); renderConnectors(); }
+function syncConnectorInputs() {
+  $$('#conn-list [data-ci]').forEach((row) => { const c = st.conns[+row.dataset.ci]; if (!c) return;
+    c.name = $('[data-f=name]', row).value; c.url = $('[data-f=url]', row).value; c.filter = $('[data-f=filter]', row).value;
+    c.token = $('[data-f=token]', row).value; c.enabled = $('[data-f=enabled]', row).checked; c.readOnly = $('[data-f=readOnly]', row).checked; });
+}
+function renderConnectors() {
+  const inp = 'w-full px-3 py-1.5 rounded-lg text-xs bg-claude-bgLight dark:bg-claude-bgDark border border-claude-borderLight dark:border-claude-borderDark outline-none focus:border-claude-accent';
+  const list = $('#conn-list');
+  if (!st.conns?.length) { list.innerHTML = '<div class="text-xs text-claude-mutedLight dark:text-claude-mutedDark py-6 text-center border border-dashed border-claude-borderLight dark:border-claude-borderDark rounded-xl">No connectors yet. Add GitHub to let the model read and write your repos.</div>'; return; }
+  list.innerHTML = st.conns.map((c, i) => `<div data-ci="${i}" class="p-3 rounded-xl border border-claude-borderLight dark:border-claude-borderDark space-y-2">
+    <div class="flex items-center gap-2"><input data-f="name" class="${inp} font-semibold" value="${esc(c.name || '')}" placeholder="Name"><label class="flex items-center gap-1.5 text-xs shrink-0"><input type="checkbox" data-f="enabled" ${c.enabled !== false ? 'checked' : ''}>On</label></div>
+    <input data-f="url" class="${inp} font-mono" value="${esc(c.url || '')}" placeholder="MCP server URL (https://…)">
+    <input data-f="token" type="password" class="${inp} font-mono" placeholder="${c.hasToken ? `Saved (${esc(c.hint || '')}). Type to replace` : 'Access token (ghp_… / github_pat_…)'}" autocomplete="off">
+    <input data-f="filter" class="${inp}" value="${esc(c.filter || '')}" placeholder="Only tools whose name contains… (comma list, empty = all)">
+    <div class="flex items-center gap-3 text-xs"><label class="flex items-center gap-1.5"><input type="checkbox" data-f="readOnly" ${c.readOnly ? 'checked' : ''}>Read-only (no writes)</label>
+      <button type="button" data-a="test" class="ml-auto px-2.5 py-1 rounded-lg border border-claude-borderLight dark:border-claude-borderDark hover:bg-black/5 dark:hover:bg-white/5">Test</button>
+      <button type="button" data-a="del" class="px-2.5 py-1 rounded-lg text-red-600 hover:bg-red-500/10">Remove</button></div>
+    <div data-f="result" class="text-[11px] text-claude-mutedLight dark:text-claude-mutedDark hidden"></div></div>`).join('');
+  $$('#conn-list [data-ci]').forEach((row) => {
+    const i = +row.dataset.ci;
+    $('[data-a=del]', row).onclick = () => { syncConnectorInputs(); st.conns.splice(i, 1); renderConnectors(); };
+    $('[data-a=test]', row).onclick = async () => {
+      syncConnectorInputs(); const c = st.conns[i], out = $('[data-f=result]', row); out.classList.remove('hidden'); out.textContent = 'Testing…';
+      try { const r = await api('/connectors/test', { method: 'POST', body: { id: c.id, name: c.name, url: c.url, token: c.token, filter: c.filter, readOnly: c.readOnly } });
+        out.textContent = r.ok ? `✓ Connected. ${r.enabled} of ${r.total} tools enabled: ${r.names.slice(0, 12).join(', ')}${r.names.length > 12 ? '…' : ''}` : '✗ ' + r.error; } catch (e) { out.textContent = '✗ ' + e.message; }
+    };
+  });
+}
+async function saveConnectors(silent) {
+  if (!st.conns) return; syncConnectorInputs();
+  try { const r = await api('/connectors', { method: 'PUT', body: { connectors: st.conns } }); st.conns = r.connectors; renderConnectors(); if (!silent) toast('Connectors saved'); } catch (e) { toast(e.message); }
 }
 function fillSettings() {
   const p = st.config.providers || {};
@@ -674,6 +771,7 @@ async function saveSettings(silent) {
   };
   st.opts.maxTokens = +$('#set-max-tokens').value; saveOpts();
   await api('/config', { method: 'PUT', body });
+  if (st.conns) await saveConnectors(true);
   await loadConfig(); await loadModels(true); showWelcomeGreetingIfEmpty(); fillSettings();
   if (silent !== true) { closeModal('settings-modal'); toast('Settings saved'); }
 }

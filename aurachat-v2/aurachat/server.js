@@ -26,6 +26,7 @@ if (!ADMIN_PASSWORD) {
   console.error('ADMIN_PASSWORD is not set. Put it in .env (the installer does this).');
   process.exit(1);
 }
+const mcp = require('./mcp');
 const APP_NAME = process.env.APP_NAME || 'AuraChat';
 
 let SESSION_SECRET = process.env.SESSION_SECRET || getSetting('session_secret');
@@ -277,11 +278,40 @@ app.delete('/api/skills/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- connectors (MCP servers, e.g. GitHub) ----------
+const getConnectors = () => { try { const a = JSON.parse(getSetting('mcp_servers', '[]')); return Array.isArray(a) ? a : []; } catch { return []; } };
+const pubConnector = (x) => ({ id: x.id, name: x.name, url: x.url, enabled: x.enabled !== false, readOnly: !!x.readOnly, filter: x.filter || '', hasToken: !!x.token, hint: hint(x.token) });
+app.get('/api/connectors', (req, res) => res.json({ connectors: getConnectors().map(pubConnector) }));
+app.put('/api/connectors', (req, res) => {
+  const old = new Map(getConnectors().map((x) => [x.id, x]));
+  const list = (Array.isArray(req.body?.connectors) ? req.body.connectors : []).slice(0, 12).map((x) => {
+    const id = typeof x.id === 'string' && x.id ? x.id.slice(0, 40) : crypto.randomBytes(5).toString('hex');
+    const prev = old.get(id);
+    let token = typeof x.token === 'string' ? x.token.trim().slice(0, 600) : '';
+    if (x.token === '__clear__') token = ''; else if (!token) token = prev?.token || '';
+    const url = String(x.url || '').trim().slice(0, 400);
+    return { id, name: String(x.name || 'Connector').trim().slice(0, 40), url, token, enabled: x.enabled !== false, readOnly: !!x.readOnly, filter: String(x.filter || '').slice(0, 300) };
+  }).filter((x) => /^https?:\/\//i.test(x.url));
+  setSetting('mcp_servers', JSON.stringify(list));
+  res.json({ connectors: list.map(pubConnector) });
+});
+app.post('/api/connectors/test', async (req, res) => {
+  const b = req.body || {};
+  const saved = getConnectors().find((x) => x.id === b.id);
+  const srv = { ...(saved || {}), ...(b.url ? { url: String(b.url).trim() } : {}), name: b.name || saved?.name || 'Connector', filter: b.filter ?? saved?.filter, readOnly: b.readOnly ?? saved?.readOnly };
+  if (typeof b.token === 'string' && b.token.trim()) srv.token = b.token.trim();
+  if (!/^https?:\/\//i.test(srv.url || '')) return res.json({ ok: false, error: 'Enter a valid https:// URL' });
+  try { res.json({ ok: true, ...(await mcp.testServer(srv)) }); } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ---------- prompt building ----------
-function buildSystem(style, skillId) {
+function buildSystem(style, skillId, hasTools) {
   const parts = [
-    `You are a helpful, thoughtful AI assistant in a self-hosted chat app. Today is ${new Date().toUTCString().slice(0, 16)}. Format answers with Markdown when it helps. When the user asks you to build a web page, app, widget or visual, deliver it as ONE complete self-contained file in a single fenced \`\`\`html block (inline CSS and JS, no build step) or a \`\`\`svg block, so it can be previewed live in the Artifacts panel.`,
+    `You are a helpful, thoughtful AI assistant in a self-hosted chat app. Today is ${new Date().toUTCString().slice(0, 16)}. Format answers with Markdown when it helps. When the user asks you to build a web page, app, widget or visual, deliver it as ONE complete self-contained file in a single fenced \`\`\`html block (inline CSS and JS, no build step) or a \`\`\`svg block, so it can be previewed live in the Artifacts panel.
+
+When the user wants files, a project, plugin source, configs or scripts: put EACH file in its own fenced code block whose FIRST line is a file marker comment with the path, e.g. \`// file: src/Main.java\`, \`# file: config.yml\`, \`<!-- file: index.html -->\`, \`-- file: setup.sql\`. The app hides the code behind download cards and adds a "Download all (.zip)" button, so do NOT say you created or attached a zip or any file yourself, and never paste file contents outside those blocks. You cannot produce binaries (.jar, .exe, images); give the source plus short build steps instead. Keep prose short and don't repeat code in the explanation.`,
   ];
+  if (hasTools) parts.push('## Connectors\nYou can call tools connected to the user\'s accounts (e.g. GitHub). Use them when the user asks to read, search, create or change files/repos; if you need an owner/repo or path you don\'t know, look it up with a tool or ask briefly. After using tools, say plainly what you did (repo, path, branch). Never claim to have changed something unless a tool call succeeded.');
   if (STYLES[style]) parts.push(STYLES[style]);
   const custom = getSetting('system_prompt', '').trim();
   if (custom) parts.push(`## User's custom instructions\n${custom}`);
@@ -430,7 +460,13 @@ app.post('/api/chat', async (req, res) => {
   let failed = null;
 
   try {
-    const stream = streamModel({ modelId, system: buildSystem(style, skillId), messages: buildMessages(conv.id), opts, signal: ac.signal });
+    let toolset = null;
+    if (req.body?.options?.connectors !== false && getConnectors().some((x) => x.enabled !== false)) {
+      toolset = await mcp.buildToolset(getConnectors());
+      if (toolset.notes.length) send({ type: 'status', text: 'Connector problem: ' + toolset.notes[0] });
+      if (!toolset.defs.length) toolset = null;
+    }
+    const stream = streamModel({ modelId, system: buildSystem(style, skillId, !!toolset), messages: buildMessages(conv.id), opts: { ...opts, toolset }, signal: ac.signal });
     for await (const ev of stream) {
       if (ev.t === 'thinking') { thinking += ev.text; send({ type: 'thinking', text: ev.text }); continue; }
       if (ev.t === 'status') { send({ type: 'status', text: ev.text }); continue; }

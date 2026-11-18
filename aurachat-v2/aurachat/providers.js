@@ -81,48 +81,90 @@ function openaiMessages(messages) {
 }
 
 // ---------- Anthropic Messages protocol (works for api.anthropic.com and compatible gateways) ----------
+const MAX_ROUNDS = 10; // max tool-use rounds per reply
+async function runTools(ts, calls, signal) {
+  const out = [];
+  for (const c of calls) {
+    let args = {}; try { args = c.args ? JSON.parse(c.args) : {}; } catch {}
+    const r = await ts.run(c.name, args, signal);
+    out.push({ call: c, text: r.text, isError: r.isError });
+  }
+  return out;
+}
+
 async function* anthropicProtocol({ endpoint, headers, model, system, messages, opts, signal, who, base }) {
-  const body = { model, system, messages: anthropicMessages(messages), stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX };
-  if (opts.effort && BUDGETS[opts.effort]) {
-    const budget = BUDGETS[opts.effort];
-    body.thinking = { type: 'enabled', budget_tokens: budget };
-    body.max_tokens += budget; // thinking budget counts against max_tokens
-  } else if (typeof opts.temperature === 'number') {
-    body.temperature = opts.temperature;
-  }
-  if (opts.webSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
-
-  const resp = await doFetch(endpoint, {
-    method: 'POST', signal,
-    headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers },
-    body: JSON.stringify(body),
-  }, who, base);
-  if (!resp.ok) await failFromResponse(resp, who);
-
-  for await (const data of sseData(resp)) {
-    let ev;
-    try { ev = JSON.parse(data); } catch { continue; }
-    if (ev.type === 'content_block_start') {
-      const cb = ev.content_block || {};
-      if (cb.type === 'server_tool_use' && cb.name === 'web_search') yield { t: 'status', text: 'Searching the web…' };
-    } else if (ev.type === 'content_block_delta') {
-      const d = ev.delta || {};
-      if (d.type === 'text_delta') yield { t: 'text', text: d.text };
-      else if (d.type === 'thinking_delta') yield { t: 'thinking', text: d.thinking };
-    } else if (ev.type === 'error') {
-      throw new Error(ev.error?.message || `${who} stream error`);
+  const ts = opts.toolset?.defs?.length ? opts.toolset : null;
+  const msgs = anthropicMessages(messages);
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const body = { model, system, messages: msgs, stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX };
+    if (opts.effort && BUDGETS[opts.effort]) {
+      const budget = BUDGETS[opts.effort];
+      body.thinking = { type: 'enabled', budget_tokens: budget };
+      body.max_tokens += budget; // thinking budget counts against max_tokens
+    } else if (typeof opts.temperature === 'number') {
+      body.temperature = opts.temperature;
     }
+    const tools = [];
+    if (opts.webSearch) tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: 5 });
+    if (ts) for (const d of ts.defs) tools.push({ name: d.name, description: d.description, input_schema: d.schema });
+    if (tools.length) body.tools = tools;
+
+    const resp = await doFetch(endpoint, {
+      method: 'POST', signal,
+      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers },
+      body: JSON.stringify(body),
+    }, who, base);
+    if (!resp.ok) await failFromResponse(resp, who);
+
+    const blocks = {}; let stop = '';
+    for await (const data of sseData(resp)) {
+      let ev;
+      try { ev = JSON.parse(data); } catch { continue; }
+      if (ev.type === 'content_block_start') {
+        const cb = ev.content_block || {};
+        blocks[ev.index] = { ...cb, _json: '' };
+        if (cb.type === 'text') blocks[ev.index].text = cb.text || '';
+        if (cb.type === 'thinking') { blocks[ev.index].thinking = cb.thinking || ''; blocks[ev.index].signature = cb.signature || ''; }
+        if (cb.type === 'server_tool_use' && cb.name === 'web_search') yield { t: 'status', text: 'Searching the web…' };
+      } else if (ev.type === 'content_block_delta') {
+        const d = ev.delta || {}, blk = blocks[ev.index] || (blocks[ev.index] = { type: 'text', text: '', _json: '' });
+        if (d.type === 'text_delta') { blk.text = (blk.text || '') + d.text; yield { t: 'text', text: d.text }; }
+        else if (d.type === 'thinking_delta') { blk.thinking = (blk.thinking || '') + d.thinking; yield { t: 'thinking', text: d.thinking }; }
+        else if (d.type === 'signature_delta') blk.signature = (blk.signature || '') + d.signature;
+        else if (d.type === 'input_json_delta') blk._json += d.partial_json || '';
+      } else if (ev.type === 'message_delta') {
+        stop = ev.delta?.stop_reason || stop;
+      } else if (ev.type === 'error') {
+        throw new Error(ev.error?.message || `${who} stream error`);
+      }
+    }
+    const content = Object.keys(blocks).sort((x, y) => x - y).map((k) => {
+      const { _json, ...bl } = blocks[k];
+      if (bl.type === 'tool_use' || bl.type === 'server_tool_use') { try { bl.input = _json ? JSON.parse(_json) : (bl.input || {}); } catch { bl.input = {}; } }
+      return bl;
+    }).filter((bl) => bl.type !== 'text' || bl.text);
+    const uses = content.filter((bl) => bl.type === 'tool_use');
+    if (!ts || stop !== 'tool_use' || !uses.length) return;
+    msgs.push({ role: 'assistant', content });
+    const results = [];
+    for (const u of uses) {
+      yield { t: 'status', text: `Using ${ts.label(u.name)}…` };
+      const [r] = await runTools(ts, [{ name: u.name, args: JSON.stringify(u.input || {}) }], signal);
+      results.push({ type: 'tool_result', tool_use_id: u.id, content: r.text, ...(r.isError ? { is_error: true } : {}) });
+    }
+    msgs.push({ role: 'user', content: results });
   }
+  yield { t: 'text', text: '\n\n_(Stopped: too many tool steps in one reply.)_' };
 }
 
 // ---------- OpenAI chat/completions protocol ----------
 // style: 'openrouter' (reasoning/plugins params) | 'custom' (Anthropic-style thinking param passthrough)
 async function* openaiProtocol({ endpoint, headers, model, system, messages, opts, signal, who, base, style }) {
+  const ts = opts.toolset?.defs?.length ? opts.toolset : null;
+  const msgs = [{ role: 'system', content: system }, ...openaiMessages(messages)];
+  let useTools = !!ts;
   const build = (withThinking) => {
-    const body = {
-      model, stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX,
-      messages: [{ role: 'system', content: system }, ...openaiMessages(messages)],
-    };
+    const body = { model, stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX, messages: msgs };
     if (typeof opts.temperature === 'number' && !(withThinking && opts.effort)) body.temperature = opts.temperature;
     if (opts.effort && withThinking) {
       if (style === 'openrouter') body.reasoning = { effort: opts.effort === 'max' ? 'high' : opts.effort };
@@ -133,6 +175,7 @@ async function* openaiProtocol({ endpoint, headers, model, system, messages, opt
       }
     }
     if (opts.webSearch && style === 'openrouter') body.plugins = [{ id: 'web' }];
+    if (useTools) body.tools = ts.defs.map((d) => ({ type: 'function', function: { name: d.name, description: d.description, parameters: d.schema } }));
     return body;
   };
   const send = (withThinking) => doFetch(endpoint, {
@@ -141,25 +184,45 @@ async function* openaiProtocol({ endpoint, headers, model, system, messages, opt
     body: JSON.stringify(build(withThinking)),
   }, who, base);
 
-  let resp = await send(true);
-  if (!resp.ok && resp.status === 400 && opts.effort) resp = await send(false); // model rejects thinking params
-  if (!resp.ok) await failFromResponse(resp, who);
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    let resp = await send(true);
+    if (!resp.ok && resp.status === 400 && opts.effort) resp = await send(false); // model rejects thinking params
+    if (!resp.ok && resp.status === 400 && useTools) { useTools = false; yield { t: 'status', text: 'This model rejected tools — continuing without connectors' }; resp = await send(!!opts.effort); }
+    if (!resp.ok) await failFromResponse(resp, who);
 
-  for await (const data of sseData(resp)) {
-    if (data === '[DONE]') break;
-    let ev;
-    try { ev = JSON.parse(data); } catch { continue; }
-    if (ev.error) throw new Error(ev.error.message || `${who} stream error`);
-    const d = ev.choices?.[0]?.delta;
-    if (d) {
-      const r = d.reasoning_content || d.reasoning || d.thinking;
-      if (r) yield { t: 'thinking', text: r };
-      if (d.content) yield { t: 'text', text: d.content };
-    } else if (ev.type === 'content_block_delta') { // gateways that pass Anthropic SSE through
-      if (ev.delta?.type === 'thinking_delta') yield { t: 'thinking', text: ev.delta.thinking };
-      else if (ev.delta?.type === 'text_delta') yield { t: 'text', text: ev.delta.text };
+    const calls = {}; let text = '';
+    for await (const data of sseData(resp)) {
+      if (data === '[DONE]') break;
+      let ev;
+      try { ev = JSON.parse(data); } catch { continue; }
+      if (ev.error) throw new Error(ev.error.message || `${who} stream error`);
+      const d = ev.choices?.[0]?.delta;
+      if (d) {
+        const r = d.reasoning_content || d.reasoning || d.thinking;
+        if (r) yield { t: 'thinking', text: r };
+        if (d.content) { text += d.content; yield { t: 'text', text: d.content }; }
+        for (const tc of d.tool_calls || []) {
+          const k = tc.index ?? 0, c = calls[k] || (calls[k] = { id: '', name: '', args: '' });
+          if (tc.id) c.id = tc.id;
+          if (tc.function?.name) c.name += tc.function.name;
+          if (tc.function?.arguments) c.args += tc.function.arguments;
+        }
+      } else if (ev.type === 'content_block_delta') { // gateways that pass Anthropic SSE through
+        if (ev.delta?.type === 'thinking_delta') yield { t: 'thinking', text: ev.delta.thinking };
+        else if (ev.delta?.type === 'text_delta') yield { t: 'text', text: ev.delta.text };
+      }
+    }
+    const list = Object.values(calls).filter((c) => c.name);
+    if (!useTools || !list.length) return;
+    list.forEach((c, i) => { if (!c.id) c.id = `call_${round}_${i}`; });
+    msgs.push({ role: 'assistant', content: text || null, tool_calls: list.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.args || '{}' } })) });
+    for (const c of list) {
+      yield { t: 'status', text: `Using ${ts.label(c.name)}…` };
+      const [r] = await runTools(ts, [c], signal);
+      msgs.push({ role: 'tool', tool_call_id: c.id, content: r.text });
     }
   }
+  yield { t: 'text', text: '\n\n_(Stopped: too many tool steps in one reply.)_' };
 }
 
 // ---------- providers ----------

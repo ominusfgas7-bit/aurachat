@@ -48,3 +48,13 @@ Put it behind a Cloudflare Tunnel or Caddy. Sessions use a Secure cookie automat
 npm install && cp .env.example .env   # edit .env
 npm start
 ```
+
+## Connectors (GitHub / MCP)
+
+Settings → Connectors → **+ GitHub**, paste a GitHub token (scope `repo`), Save. Chats can then read, search, create and push files in your repos
+(toggle per chat in the **+** menu). Any HTTP MCP server URL works under **+ Custom MCP server**. Use "Only tools containing…" to keep the tool list short,
+and **Read-only** to block writes. Needs a model that supports tool calling.
+
+## Files
+
+When a reply contains code files, the code is hidden behind cards (View / Copy / Download) and a **Download all (.zip)** card is added.
