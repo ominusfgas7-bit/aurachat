@@ -67,6 +67,28 @@
     .markdown-body a { color: #D97757; text-decoration: underline; text-underline-offset: 2px; }
     .streaming-cursor::after { content: '●'; color: #D97757; margin-left: 5px; font-size: .85em; animation: pulseCursor .9s infinite ease-in-out; }
     @keyframes pulseCursor { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+    /* ---- motion polish ---- */
+    @keyframes msgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    .msg-in { animation: msgIn .32s cubic-bezier(.2,.7,.2,1) both; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .shimmer { background: linear-gradient(100deg, currentColor 35%, #D97757 50%, currentColor 65%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent !important; animation: shimmer 2.2s linear infinite; }
+    .spark-row { height: 22px; margin-top: .6rem; display: flex; align-items: center; }
+    .spark-row.hidden { display: none; }
+    .spark { width: 20px; height: 20px; color: #D97757; transform-origin: 50% 50%; }
+    .spark.live { animation: sparkSpin 2.4s cubic-bezier(.5,0,.5,1) infinite, sparkPulse 1.2s ease-in-out infinite; }
+    @keyframes sparkSpin { to { transform: rotate(360deg); } }
+    @keyframes sparkPulse { 0%,100% { opacity: .55; scale: .85; } 50% { opacity: 1; scale: 1.1; } }
+    .streaming-cursor::after { display: none !important; }
+    #welcome-screen > div:first-child { animation: msgIn .6s cubic-bezier(.2,.7,.2,1) both; }
+    #welcome-greeting { animation: msgIn .7s .08s cubic-bezier(.2,.7,.2,1) both; }
+    #claude-composer-card, #claude-composer-card * { transition-property: box-shadow, border-color, background-color, transform, opacity; transition-duration: .18s; }
+    #claude-composer-card:focus-within { box-shadow: 0 6px 28px rgba(217,119,87,.16), 0 0 0 1px rgba(217,119,87,.45); }
+    button:not(:disabled):active { transform: scale(.96); }
+    #chat-history-list .group { transition: background-color .15s, padding-left .15s; }
+    .acts { opacity: 0; transition: opacity .18s; } .group:hover .acts, .group:focus-within .acts, .acts:has(button:focus-visible) { opacity: 1; }
+    @media (hover: none) { .acts { opacity: 1; } }
+    #to-bottom { transition: opacity .2s, transform .2s; } #to-bottom.off { opacity: 0; pointer-events: none; transform: translateY(8px) scale(.9); }
+    @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
     .spin-slow { animation: spinSlow 6s linear infinite; } @keyframes spinSlow { to { transform: rotate(360deg); } }
     .modal-backdrop { animation: fadeIn .15s ease-out; } @keyframes fadeIn { from { opacity: 0; } }
     .filecard { margin: 1rem 0; border-radius: .9rem; border: 1px solid rgba(130,125,115,.3); overflow: hidden; }

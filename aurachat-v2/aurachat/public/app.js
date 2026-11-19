@@ -416,7 +416,7 @@ function userEl(m, idx) {
 }
 function assistantEl(m, idx, final) {
   const d = document.createElement('div'); d.className = 'group';
-  d.innerHTML = `<div class="think-slot">${m.thinking ? thinkHtml(m.thinking, false) : ''}</div><div class="status hidden text-xs text-claude-mutedLight dark:text-claude-mutedDark mb-2"></div><div class="markdown-body"></div><div class="acts flex gap-0.5 mt-2 text-claude-mutedLight dark:text-claude-mutedDark"></div>`;
+  d.innerHTML = `<div class="think-slot">${m.thinking ? thinkHtml(m.thinking, false) : ''}</div><div class="status hidden text-xs text-claude-mutedLight dark:text-claude-mutedDark mb-2"></div><div class="markdown-body"></div><div class="spark-row hidden"><svg class="spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 6.1L20 6l-3.9 5.1L22 12l-5.9.9L20 18l-6.1-2.1L12 22l-1.9-6.1L4 18l3.9-5.1L2 12l5.9-.9L4 6l6.1 2.1z"/></svg></div><div class="acts flex gap-0.5 mt-2 text-claude-mutedLight dark:text-claude-mutedDark"></div>`;
   const md = $('.markdown-body', d); md.innerHTML = renderMd(m.content || ''); if (m.content) enhance(md, final);
   if (m.content) setAssistantActions(d, idx);
   return d;
@@ -478,6 +478,7 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
   const priorArtifacts = st.artifacts.length;
   st.artifacts = []; st.curArtifact = -1;
   st.messages.forEach((m, i) => box.appendChild(m.role === 'user' ? userEl(m, i) : assistantEl(m, i, true)));
+  if (!regenerate) $('#messages-container').lastElementChild?.classList.add('msg-in');
   const d = assistantEl({ role: 'assistant', content: '' }, -1, false);
   box.appendChild(d);
   const md = $('.markdown-body', d), slot = $('.think-slot', d), statusEl = $('.status', d);
@@ -485,16 +486,28 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
 
   setSending(true);
   const ac = (st.abort = new AbortController());
-  let acc = '', thinking = '', err = null, raf = 0;
-  const paint = () => {
-    raf = 0; md.innerHTML = renderMd(hideOpenFence(acc)); enhance(md, false);
-    if (thinking) {
-      if (!slot.firstChild) slot.innerHTML = thinkHtml('', !acc);
-      const det = slot.firstChild; $('.tt', det).textContent = thinking;
-      if (acc && det.open && !det._closed) { det.open = false; det._closed = true; $('summary', det).textContent = 'Thought process'; }
+  let acc = '', thinking = '', err = null, raf = 0, shown = 0, lastT = 0;
+  const sparkRow = $('.spark-row', d), spark = $('.spark', d);
+  sparkRow.classList.remove('hidden'); spark.classList.add('live'); d.classList.add('msg-in');
+  statusEl.textContent = 'Thinking…'; statusEl.classList.remove('hidden'); statusEl.classList.add('shimmer', 'inline-block');
+  const paint = (t = 0) => {
+    raf = 0;
+    if (t - lastT >= 33 || !t) { // ~30fps markdown re-render, characters released smoothly
+      lastT = t;
+      const backlog = acc.length - shown;
+      if (backlog > 0) { shown += Math.min(backlog, Math.max(2, Math.ceil(backlog / 7))); md.innerHTML = renderMd(hideOpenFence(acc.slice(0, shown))); enhance(md, false); }
+      if (thinking) {
+        if (!slot.firstChild) slot.innerHTML = thinkHtml('', !acc);
+        const det = slot.firstChild; $('.tt', det).textContent = thinking;
+        $('summary', det).classList.toggle('shimmer', !acc);
+        if (acc && det.open && !det._closed) { det.open = false; det._closed = true; const s = $('summary', det); s.textContent = 'Thought process'; s.classList.remove('shimmer'); }
+      }
+      scrollDown();
     }
-    scrollDown();
+    if (shown < acc.length) raf = requestAnimationFrame(paint);
   };
+  const kick = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  const calm = () => { statusEl.classList.remove('shimmer'); };
   const o = st.opts;
   try {
     const r = await fetch('/api/chat', {
@@ -516,15 +529,17 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
         if (!line.startsWith('data:')) continue;
         let ev; try { ev = JSON.parse(line.slice(5)); } catch { continue; }
         if (ev.type === 'meta') { if (!st.cur) { st.cur = ev.conversationId; setHeaderTitle(ev.title); } }
-        else if (ev.type === 'delta') { statusEl.classList.add('hidden'); acc += ev.text; if (!raf) raf = requestAnimationFrame(paint); }
-        else if (ev.type === 'thinking') { thinking += ev.text; if (!raf) raf = requestAnimationFrame(paint); }
-        else if (ev.type === 'status') { statusEl.textContent = '🔎 ' + ev.text; statusEl.classList.remove('hidden'); }
+        else if (ev.type === 'delta') { statusEl.classList.add('hidden'); acc += ev.text; kick(); }
+        else if (ev.type === 'thinking') { thinking += ev.text; statusEl.classList.add('hidden'); kick(); }
+        else if (ev.type === 'status') { statusEl.textContent = ev.text; statusEl.classList.remove('hidden'); statusEl.classList.add('shimmer', 'inline-block'); }
         else if (ev.type === 'error') err = ev.error;
       }
     }
   } catch (e) { if (e.name !== 'AbortError') err = e.message; }
 
-  if (raf) cancelAnimationFrame(raf);
+  // let the typewriter finish so the end doesn't jump
+  for (let n = 0; n < 90 && shown < acc.length && !ac.signal.aborted; n++) await new Promise((r) => setTimeout(r, 16));
+  if (raf) cancelAnimationFrame(raf); void calm;
   md.classList.remove('streaming-cursor'); statusEl.classList.add('hidden');
   if (acc.trim()) st.messages.push({ role: 'assistant', content: acc.trim(), thinking, model: st.model });
   setSending(false); st.abort = null;
@@ -860,3 +875,15 @@ paintIcons(); applyTheme(document.documentElement.classList.contains('dark') ? '
 $('#set-custom-key').dataset.ph = 'Gateway API key'; $('#set-anthropic-key').dataset.ph = 'sk-ant-…'; $('#set-openrouter-key').dataset.ph = 'sk-or-…';
 document.addEventListener('DOMContentLoaded', () => {});
 (async () => { try { await api('/me'); await boot(); } catch { /* login screen is shown by api() */ } })();
+
+
+// ---- scroll-to-bottom button ----
+(() => {
+  const area = $('#messages-scroll-area'); if (!area) return;
+  const wrap = document.createElement('div'); wrap.className = 'sticky bottom-3 h-0 flex justify-center overflow-visible z-10 shrink-0';
+  wrap.innerHTML = '<button id="to-bottom" type="button" class="off -translate-y-full w-9 h-9 rounded-full bg-claude-surfaceLight dark:bg-claude-cardDark border border-claude-borderLight dark:border-claude-borderDark shadow-lg flex items-center justify-center text-claude-mutedLight dark:text-claude-mutedDark hover:text-claude-accent" title="Scroll to latest"><svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>';
+  area.appendChild(wrap);
+  const b = $('#to-bottom');
+  b.onclick = () => area.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+  area.addEventListener('scroll', () => b.classList.toggle('off', area.scrollHeight - area.scrollTop - area.clientHeight < 240), { passive: true });
+})();
