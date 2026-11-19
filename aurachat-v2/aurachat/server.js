@@ -194,6 +194,7 @@ app.get('/api/conversations', (req, res) => {
 app.get('/api/conversations/:id', (req, res) => {
   const c = db.prepare('SELECT id,title,model,starred,skill_id FROM conversations WHERE id=?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'Not found' });
+  c.running = !!(runs.get(c.id) && !runs.get(c.id).finished);
   c.messages = db.prepare('SELECT id,role,content,model,thinking FROM messages WHERE conv_id=? ORDER BY id').all(c.id);
   const atts = db.prepare('SELECT id,msg_id,kind,name FROM attachments WHERE msg_id IN (SELECT id FROM messages WHERE conv_id=?)').all(c.id);
   for (const m of c.messages) {
@@ -403,7 +404,28 @@ class MemoryFilter {
   flush() { const r = this.inside ? '' : this.buf; this.buf = ''; return r; }
 }
 
-// ---------- chat ----------
+// ---------- chat (runs continue on the server even if the browser leaves) ----------
+const runs = new Map(); // conversationId -> run
+function sseHeaders(res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+}
+function attachRun(run, res) { // replay what exists so far, then stream live
+  const send = (o) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(o)}\n\n`); };
+  send({ type: 'meta', conversationId: run.convId, title: run.title });
+  if (run.thinking) send({ type: 'thinking', text: run.thinking });
+  if (run.status) send({ type: 'status', text: run.status });
+  if (run.full) send({ type: 'delta', text: run.full });
+  if (run.finished) { if (run.failed) send({ type: 'error', error: run.failed }); send({ type: 'done', messageId: run.messageId }); return res.end(); }
+  const fn = (o) => { send(o); if (o.type === 'done') res.end(); };
+  run.listeners.add(fn);
+  res.on('close', () => run.listeners.delete(fn));
+}
+app.post('/api/conversations/:id/stop', (req, res) => { const r = runs.get(Number(req.params.id)); if (r && !r.finished) r.ac.abort(); res.json({ ok: true }); });
+app.get('/api/conversations/:id/stream', (req, res) => {
+  const r = runs.get(Number(req.params.id));
+  if (!r) return res.status(204).end();
+  sseHeaders(res); attachRun(r, res);
+});
 app.post('/api/chat', async (req, res) => {
   const { conversationId, message, regenerate, editMessageId } = req.body || {};
   const c = cfg();
@@ -423,6 +445,8 @@ app.post('/api/chat', async (req, res) => {
   if (conversationId) {
     conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId);
     if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+    const ex = runs.get(conv.id);
+    if (ex && !ex.finished) return res.status(409).json({ error: 'Still answering in this chat. Wait for it or press Stop.' });
   }
 
   if (regenerate) {
@@ -450,17 +474,14 @@ app.post('/api/chat', async (req, res) => {
   }
   db.prepare('UPDATE conversations SET updated=?, model=?, skill_id=? WHERE id=?').run(now, modelId, skillId, conv.id);
 
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
-  send({ type: 'meta', conversationId: conv.id, title: conv.title });
-
-  const ac = new AbortController();
-  res.on('close', () => ac.abort());
+  const run = { convId: conv.id, title: conv.title, full: '', thinking: '', status: '', finished: false, failed: null, messageId: null, listeners: new Set(), ac: new AbortController() };
+  runs.set(conv.id, run);
+  const send = (o) => {
+    if (o.type === 'delta') { run.full += o.text; run.status = ''; } else if (o.type === 'thinking') run.thinking += o.text; else if (o.type === 'status') run.status = o.text;
+    for (const l of run.listeners) l(o);
+  };
+  sseHeaders(res); attachRun(run, res);
+  const ac = run.ac; // NOT tied to the browser connection: the answer keeps generating if you leave
 
   let full = '';
   let thinking = '';
@@ -503,11 +524,10 @@ app.post('/api/chat', async (req, res) => {
     id = db.prepare('INSERT INTO messages(conv_id,role,content,model,thinking,created) VALUES(?,?,?,?,?,?)').run(conv.id, 'assistant', full, modelId, thinking, Date.now()).lastInsertRowid;
     db.prepare('UPDATE conversations SET updated=? WHERE id=?').run(Date.now(), conv.id);
   }
-  if (!res.writableEnded) {
-    if (failed) send({ type: 'error', error: failed });
-    send({ type: 'done', messageId: id });
-    res.end();
-  }
+  run.finished = true; run.failed = failed; run.messageId = id;
+  if (failed) send({ type: 'error', error: failed });
+  send({ type: 'done', messageId: id });
+  setTimeout(() => { if (runs.get(conv.id) === run) runs.delete(conv.id); }, 60000);
 });
 
 // ---------- build jobs: compile plugins / assemble a ready server .zip (see builder.js) ----------

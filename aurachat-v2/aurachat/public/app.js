@@ -376,8 +376,8 @@ function showWelcome(on) {
     $('#welcome-greeting').textContent = (h < 5 ? 'Burning the midnight oil' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + n;
   }
 }
-function createNewChat() {
-  if (st.streaming) return;
+async function createNewChat() {
+  await leaveStream();
   st.cur = null; st.messages = []; st.artifacts = []; st.curArtifact = -1;
   st.activeSkillId = st.config.defaultSkillId || 0;
   $('#messages-container').innerHTML = ''; setHeaderTitle('');
@@ -386,13 +386,14 @@ function createNewChat() {
   if (matchMedia('(max-width: 767px)').matches) toggleSidebar(false);
 }
 async function openChat(id) {
-  if (st.streaming) return;
+  await leaveStream();
   const c = await api('/conversations/' + id);
   st.cur = c.id; st.messages = c.messages; st.curStarred = !!c.starred;
   st.activeSkillId = c.skill_id || 0;
   if (c.model && st.models.some((m) => m.id === c.model)) { st.model = c.model; updateModelLabel(); }
   setHeaderTitle(c.title); showWelcome(false); renderMessages(); updateSkillPill(); renderChatList();
   $('#artifacts-panel').classList.add('hidden');
+  if (c.running) runChat({ attach: true });
 }
 
 // ---------------------------------------------------------------- messages
@@ -456,17 +457,20 @@ function sendMessage() {
   st.pending = []; renderAttachments();
   runChat({ text: t, images: imgs, files });
 }
-function stopGeneration() { st.abort?.abort(); }
+function stopGeneration() { st.stopped = true; if (st.cur) fetch('/api/conversations/' + st.cur + '/stop', { method: 'POST', credentials: 'same-origin' }).catch(() => {}); st.abort?.abort(); }
+async function leaveStream() { if (!st.streaming) return; st.detaching = true; st.abort?.abort(); for (let i = 0; i < 100 && st.streaming; i++) await new Promise((r) => setTimeout(r, 20)); }
 function setSending(on) {
   st.streaming = on;
   $('#send-btn').classList.toggle('hidden', on); $('#stop-btn').classList.toggle('hidden', !on); $('#stop-btn').classList.toggle('flex', on);
 }
-async function runChat({ auto = false, text = '', regenerate = false, editId = null, images = [], files = [], keepAttachments = false }) {
+async function runChat({ attach = false, auto = false, text = '', regenerate = false, editId = null, images = [], files = [], keepAttachments = false }) {
   if (st.streaming) return;
   if (!st.model) return toast('No model selected. Add an API key in Settings.');
   const wasNew = !st.cur;
   if (!auto) st.fixTries = 0;
-  if (!regenerate) {
+  if (!attach) st.reattach = 0;
+  st.stopped = false; st.detaching = false;
+  if (attach) { /* resuming a running answer: messages already loaded */ } else if (!regenerate) {
     const userMsg = { role: 'user', content: text.trim() };
     if (keepAttachments) { userMsg.images = images; userMsg.files = files; }
     else { userMsg.images = images.map((i) => ({ url: `data:${i.mime};base64,${i.data}` })); userMsg.files = files.map((f) => f.name); }
@@ -486,7 +490,7 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
 
   setSending(true);
   const ac = (st.abort = new AbortController());
-  let acc = '', thinking = '', err = null, raf = 0, shown = 0, lastT = 0;
+  let acc = '', thinking = '', err = null, raf = 0, shown = 0, lastT = 0, doneSeen = false;
   const sparkRow = $('.spark-row', d), spark = $('.spark', d);
   sparkRow.classList.remove('hidden'); spark.classList.add('live'); d.classList.add('msg-in');
   statusEl.textContent = 'Thinking…'; statusEl.classList.remove('hidden'); statusEl.classList.add('shimmer', 'inline-block');
@@ -510,7 +514,7 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
   const calm = () => { statusEl.classList.remove('shimmer'); };
   const o = st.opts;
   try {
-    const r = await fetch('/api/chat', {
+    const r = attach ? await fetch('/api/conversations/' + st.cur + '/stream', { credentials: 'same-origin', signal: ac.signal }) : await fetch('/api/chat', {
       method: 'POST', credentials: 'same-origin', signal: ac.signal, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         conversationId: st.cur, message: text, model: st.model, regenerate, editMessageId: editId, style: o.style, skillId: st.activeSkillId,
@@ -519,6 +523,7 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
       }),
     });
     if (r.status === 401) { showLogin(); throw new Error('Not logged in'); }
+    if (r.status === 204) { doneSeen = true; } else {
     if (!r.ok) { let m; try { m = (await r.json()).error; } catch {} throw new Error(m || r.statusText); }
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     for (;;) {
@@ -533,17 +538,23 @@ async function runChat({ auto = false, text = '', regenerate = false, editId = n
         else if (ev.type === 'thinking') { thinking += ev.text; statusEl.classList.add('hidden'); kick(); }
         else if (ev.type === 'status') { statusEl.textContent = ev.text; statusEl.classList.remove('hidden'); statusEl.classList.add('shimmer', 'inline-block'); }
         else if (ev.type === 'error') err = ev.error;
+        else if (ev.type === 'done') doneSeen = true;
       }
+    }
     }
   } catch (e) { if (e.name !== 'AbortError') err = e.message; }
 
+  if (st.detaching) { st.detaching = false; if (raf) cancelAnimationFrame(raf); setSending(false); st.abort = null; return; }
+  if (!doneSeen && !st.stopped && st.cur && (st.reattach || 0) < 60) { // connection dropped (phone sleep, wifi) but the server may still be answering
+    try { const c = await api('/conversations/' + st.cur); if (c.running) { if (raf) cancelAnimationFrame(raf); d.remove(); st.reattach = (st.reattach || 0) + 1; st.abort = null; setSending(false); await new Promise((r) => setTimeout(r, 1200)); return runChat({ attach: true }); } } catch {}
+  }
   // let the typewriter finish so the end doesn't jump
   for (let n = 0; n < 90 && shown < acc.length && !ac.signal.aborted; n++) await new Promise((r) => setTimeout(r, 16));
   if (raf) cancelAnimationFrame(raf); void calm;
   md.classList.remove('streaming-cursor'); statusEl.classList.add('hidden');
-  if (acc.trim()) st.messages.push({ role: 'assistant', content: acc.trim(), thinking, model: st.model });
+  if (acc.trim() && !attach) st.messages.push({ role: 'assistant', content: acc.trim(), thinking, model: st.model });
   setSending(false); st.abort = null;
-  if (st.cur) { try { const c = await api('/conversations/' + st.cur); c.messages.forEach((sm, i) => { if (st.messages[i]) { st.messages[i].id = sm.id; if (sm.images) st.messages[i].images = sm.images; if (sm.files) st.messages[i].files = sm.files; } }); } catch {} }
+  if (st.cur) { try { const c = await api('/conversations/' + st.cur); if (attach) st.messages = c.messages; c.messages.forEach((sm, i) => { if (st.messages[i]) { st.messages[i].id = sm.id; if (sm.images) st.messages[i].images = sm.images; if (sm.files) st.messages[i].files = sm.files; } }); } catch {} }
   renderMessages();
   if (err) {
     const e = document.createElement('div'); e.className = 'mt-3 p-3 rounded-xl text-sm border border-red-300/60 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/60';
