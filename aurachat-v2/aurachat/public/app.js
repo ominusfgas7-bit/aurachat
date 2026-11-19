@@ -177,6 +177,7 @@ async function buildJar(list, btn, { auto = false } = {}) {
         const r = j.result, mb = (r.size / 1048576).toFixed(r.size > 1048576 ? 1 : 2) + ' MB';
         const label = r.kind === 'pack' ? `Server pack ready · Paper ${esc(r.mc)} · ${r.plugins} plugins · ${mb}` : `${esc(r.name)} · ${(r.size / 1024).toFixed(0)} KB`;
         out.innerHTML = `<div class="flex items-center gap-3"><span class="flex-1 min-w-0">✓ ${label}${r.notes?.length ? `<span class="block text-[11px] opacity-70 mt-1">${esc(r.notes.join(' · '))}</span>` : ''}</span><a href="/api/packs/${id}" download class="px-3 py-1.5 rounded-lg bg-claude-accent text-white font-semibold whitespace-nowrap">Download ${r.kind === 'pack' ? '.zip' : '.jar'}</a></div>`;
+        if (r.kind === 'pack') addRunUI(out, id);
         const a = document.createElement('a'); a.href = `/api/packs/${id}`; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
         res = { ok: true, ...r }; break;
       }
@@ -186,6 +187,37 @@ async function buildJar(list, btn, { auto = false } = {}) {
   } catch (e) { res = { ok: false, log: e.message }; out.textContent = e.message; }
   btn.disabled = false; btn.textContent = old;
   return res;
+}
+function addRunUI(out, id) {
+  const box = document.createElement('div'); box.className = 'mt-2 pt-2 border-t border-claude-borderLight dark:border-claude-borderDark';
+  box.innerHTML = `<div class="flex flex-wrap items-center gap-2"><button type="button" data-r class="px-3 py-1.5 rounded-lg border border-claude-accent text-claude-accent font-semibold hover:bg-claude-accent/10">▶ Run test server</button>
+    <label class="flex items-center gap-1 text-[11px]"><input type="checkbox" data-off>offline mode</label>
+    <span class="text-[11px] opacity-70">Testing only · stops itself after 30 min · public address via playit.gg · accepts Mojang's EULA</span></div><div data-live class="hidden mt-2 space-y-2"></div>`;
+  out.appendChild(box);
+  const live = $('[data-live]', box), btn = $('[data-r]', box);
+  let timer = 0;
+  const render = (s) => {
+    live.classList.remove('hidden');
+    const mm = (n) => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+    const head = s.error ? `<span class="text-red-600">✗ ${esc(s.error)}</span>` : s.state === 'starting' ? 'Starting… (first run downloads Java/plugins)' : s.state === 'running' ? (s.ready ? `<b>Server is up</b> · stops in ${mm(s.secondsLeft)}` : 'Server booting…') : 'Server stopped.';
+    let mid = '';
+    if (s.address) mid = `<div class="flex items-center gap-2 p-2 rounded-lg bg-claude-accent/10"><span class="text-[11px] opacity-70">Join with</span><code class="flex-1 text-sm font-semibold select-all break-all">${esc(s.address)}</code><button type="button" data-copy class="px-2 py-1 rounded-md border border-claude-borderLight dark:border-claude-borderDark text-[11px]">Copy</button></div>`;
+    else if (s.claimUrl) mid = `<div class="p-2 rounded-lg bg-amber-500/10">One-time step: <a class="underline font-semibold" href="${esc(s.claimUrl)}" target="_blank" rel="noopener">link your free playit.gg account</a> and the address appears here.</div>`;
+    const lines = (s.lines || []).slice(-8).map(esc).join('\n');
+    live.innerHTML = `<div class="flex items-center gap-2"><span class="flex-1 min-w-0">${head}</span>${s.state === 'running' ? '<button type="button" data-stop class="px-2.5 py-1 rounded-lg border border-red-400/60 text-red-600">Stop</button>' : ''}</div>${mid}<pre class="max-h-36 overflow-auto p-2 rounded-lg bg-black/80 text-green-200 text-[10px] leading-snug whitespace-pre-wrap">${lines || '…'}</pre>${s.state === 'running' ? '<div class="flex gap-1.5"><input data-cmd class="flex-1 px-2 py-1 rounded-lg text-[11px] font-mono bg-transparent border border-claude-borderLight dark:border-claude-borderDark" placeholder="console command (e.g. op YourName)"><button type="button" data-send class="px-2.5 py-1 rounded-lg border border-claude-borderLight dark:border-claude-borderDark text-[11px]">Send</button></div>' : ''}`;
+    const st2 = $('[data-stop]', live); if (st2) st2.onclick = () => api('/server/stop', { method: 'POST', body: {} }).then(render);
+    const cp = $('[data-copy]', live); if (cp) cp.onclick = () => { clip(s.address); toast('Address copied'); };
+    const sd = $('[data-send]', live), ci = $('[data-cmd]', live);
+    if (sd) sd.onclick = async () => { if (ci.value.trim()) { render(await api('/server/cmd', { method: 'POST', body: { cmd: ci.value.trim() } })); } };
+    if (ci) ci.onkeydown = (e) => { if (e.key === 'Enter') sd.click(); };
+    return s.state === 'starting' || s.state === 'running';
+  };
+  const poll = async () => { try { if (!render(await api('/server/status'))) { clearInterval(timer); btn.disabled = false; } } catch { clearInterval(timer); btn.disabled = false; } };
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try { render(await api('/server/run', { method: 'POST', body: { id, minutes: 30, offline: $('[data-off]', box).checked } })); clearInterval(timer); timer = setInterval(poll, 2500); }
+    catch (e) { live.classList.remove('hidden'); live.innerHTML = `<span class="text-red-600">✗ ${esc(e.message)}</span>`; btn.disabled = false; }
+  };
 }
 async function autoBuildLast() {
   const zc = $('#messages-container').lastElementChild?.querySelector?.('.zipcard');

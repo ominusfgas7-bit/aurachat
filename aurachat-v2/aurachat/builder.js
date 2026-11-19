@@ -205,6 +205,7 @@ function startJob(files, { mode = 'pack', mcVersion = '' } = {}) {
         fs.writeFileSync(path.join(out, 'README-FIRST.txt'), `Minecraft server (Paper ${mc} build ${info.build})\n\n1. Install Java 21.\n2. Linux/Mac: bash start.sh   Windows: start.bat\n3. Plugins are in plugins/ (custom ones compiled for you).\n\nBy running this server you agree to Mojang's EULA (eula.txt is set to true).\n${notes.length ? '\nNotes:\n- ' + notes.join('\n- ') + '\n' : ''}`);
         log('Packing the .zip…');
         await zipDir(out, save, 'minecraft-server');
+        try { fs.cpSync(out, path.join(PACKS, id), { recursive: true }); } catch {} // kept for "Run test server"
         job.result = { kind: 'pack', name: 'minecraft-server.zip', size: fs.statSync(save).size, plugins: fs.readdirSync(path.join(out, 'plugins')).length, mc, build: info.build, notes };
       }
       job.state = 'done';
@@ -217,10 +218,10 @@ function startJob(files, { mode = 'pack', mcVersion = '' } = {}) {
 
 function sweep() { // delete finished packs older than 2 hours; forget old jobs
   const cutoff = Date.now() - 2 * 3600 * 1000;
-  try { for (const f of fs.readdirSync(PACKS)) { const p = path.join(PACKS, f); if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true }); } } catch {}
+  try { for (const f of fs.readdirSync(PACKS)) { const p = path.join(PACKS, f); if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { recursive: true, force: true }); } } catch {}
   for (const [k, j] of jobs) if (j.created < cutoff) jobs.delete(k);
 }
 const getJob = (id) => jobs.get(id);
 const packPath = (id) => (/^[0-9a-f]{16}$/.test(id) ? path.join(PACKS, id + '.zip') : null);
 
-module.exports = { startJob, getJob, packPath };
+module.exports = { startJob, getJob, packPath, ensureToolchain, download, PACKS, TOOLS, DATA_DIR };

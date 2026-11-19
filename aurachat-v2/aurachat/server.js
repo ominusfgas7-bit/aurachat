@@ -543,6 +543,11 @@ app.get('/api/build/:id', (req, res) => {
   if (!j) return res.status(404).json({ error: 'Unknown job (server restarted?)' });
   res.json({ state: j.state, steps: j.steps.slice(-4), log: j.log, buildError: !!j.buildError, result: j.result || null });
 });
+const runner = require('./runner');
+app.post('/api/server/run', async (req, res) => { try { res.json(await runner.start({ packId: String(req.body?.id || ''), minutes: req.body?.minutes, offline: !!req.body?.offline })); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });
+app.post('/api/server/stop', (req, res) => res.json(runner.stop()));
+app.post('/api/server/cmd', (req, res) => res.json(runner.command(req.body?.cmd || '')));
+app.get('/api/server/status', (req, res) => res.json(runner.state()));
 app.get('/api/packs/:id', (req, res) => {
   const p = builder.packPath(req.params.id), j = builder.getJob(req.params.id);
   if (!p || !require('fs').existsSync(p)) return res.status(404).send('Expired — build it again');
