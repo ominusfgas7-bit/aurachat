@@ -179,6 +179,7 @@ app.post('/api/test', async (req, res) => {
 });
 
 // ---------- conversations ----------
+const withRunning = (c) => ({ ...c, running: !!(runs.get(c.id) && !runs.get(c.id).finished) });
 app.get('/api/conversations', (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q) {
@@ -186,10 +187,10 @@ app.get('/api/conversations', (req, res) => {
     return res.json(
       db.prepare(`SELECT id,title,model,updated,starred FROM conversations
         WHERE title LIKE ? ESCAPE '\\' OR id IN (SELECT conv_id FROM messages WHERE content LIKE ? ESCAPE '\\')
-        ORDER BY updated DESC LIMIT 100`).all(like, like)
+        ORDER BY updated DESC LIMIT 100`).all(like, like).map(withRunning)
     );
   }
-  res.json(db.prepare('SELECT id,title,model,updated,starred FROM conversations ORDER BY updated DESC LIMIT 500').all());
+  res.json(db.prepare('SELECT id,title,model,updated,starred FROM conversations ORDER BY updated DESC LIMIT 500').all().map(withRunning));
 });
 app.get('/api/conversations/:id', (req, res) => {
   const c = db.prepare('SELECT id,title,model,starred,skill_id FROM conversations WHERE id=?').get(req.params.id);
@@ -416,9 +417,10 @@ function attachRun(run, res) { // replay what exists so far, then stream live
   if (run.status) send({ type: 'status', text: run.status });
   if (run.full) send({ type: 'delta', text: run.full });
   if (run.finished) { if (run.failed) send({ type: 'error', error: run.failed }); send({ type: 'done', messageId: run.messageId }); return res.end(); }
-  const fn = (o) => { send(o); if (o.type === 'done') res.end(); };
+  const ka = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000);
+  const fn = (o) => { send(o); if (o.type === 'done') { clearInterval(ka); res.end(); } };
   run.listeners.add(fn);
-  res.on('close', () => run.listeners.delete(fn));
+  res.on('close', () => { clearInterval(ka); run.listeners.delete(fn); });
 }
 app.post('/api/conversations/:id/stop', (req, res) => { const r = runs.get(Number(req.params.id)); if (r && !r.finished) r.ac.abort(); res.json({ ok: true }); });
 app.get('/api/conversations/:id/stream', (req, res) => {
@@ -519,6 +521,8 @@ app.post('/api/chat', async (req, res) => {
   }
 
   full = full.trim();
+  // nobody watching (you left): keep a visible note so a failed/partial answer isn't silently lost
+  if (failed && run.listeners.size === 0) full = (full ? full + '\n\n' : '') + `⚠️ Stopped: ${failed}`;
   let id = null;
   if (full) {
     id = db.prepare('INSERT INTO messages(conv_id,role,content,model,thinking,created) VALUES(?,?,?,?,?,?)').run(conv.id, 'assistant', full, modelId, thinking, Date.now()).lastInsertRowid;

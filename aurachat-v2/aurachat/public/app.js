@@ -354,7 +354,7 @@ function renderChatList() {
       const active = c.id === st.cur;
       const row = document.createElement('div');
       row.className = `group flex items-center gap-1 px-2.5 py-1.5 rounded-xl cursor-pointer text-[13px] transition ${active ? 'bg-black/[0.06] dark:bg-white/[0.08] font-medium' : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'}`;
-      row.innerHTML = `<span class="truncate flex-1">${esc(c.title)}</span>
+      row.innerHTML = `${c.running ? '<span class="w-2 h-2 rounded-full bg-claude-accent animate-pulse shrink-0" title="Still answering"></span>' : ''}<span class="truncate flex-1">${esc(c.title)}</span>
         <span class="${active ? 'flex' : 'hidden group-hover:flex'} items-center gap-0.5 text-claude-mutedLight dark:text-claude-mutedDark shrink-0">
           <button data-a="star" title="${c.starred ? 'Unstar' : 'Star'}" class="p-1 rounded hover:text-claude-accent ${c.starred ? 'text-claude-accent' : ''}">${ico(c.starred ? 'starfill' : 'star', 'w-3.5 h-3.5')}</button>
           <button data-a="ren" title="Rename" class="p-1 rounded hover:text-claude-textLight dark:hover:text-claude-textDark">${ico('pencil', 'w-3.5 h-3.5')}</button>
@@ -501,7 +501,7 @@ async function runChat({ attach = false, auto = false, text = '', regenerate = f
   const wasNew = !st.cur;
   if (!auto) st.fixTries = 0;
   if (!attach) st.reattach = 0;
-  st.stopped = false; st.detaching = false;
+  st.stopped = false; st.detaching = false; st.lastEv = Date.now();
   if (attach) { /* resuming a running answer: messages already loaded */ } else if (!regenerate) {
     const userMsg = { role: 'user', content: text.trim() };
     if (keepAttachments) { userMsg.images = images; userMsg.files = files; }
@@ -560,6 +560,7 @@ async function runChat({ attach = false, auto = false, text = '', regenerate = f
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;
+      st.lastEv = Date.now();
       buf += dec.decode(value, { stream: true }); let i;
       while ((i = buf.indexOf('\n\n')) !== -1) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 2);
@@ -578,7 +579,11 @@ async function runChat({ attach = false, auto = false, text = '', regenerate = f
 
   if (st.detaching) { st.detaching = false; if (raf) cancelAnimationFrame(raf); setSending(false); st.abort = null; return; }
   if (!doneSeen && !st.stopped && st.cur && (st.reattach || 0) < 60) { // connection dropped (phone sleep, wifi) but the server may still be answering
-    try { const c = await api('/conversations/' + st.cur); if (c.running) { if (raf) cancelAnimationFrame(raf); d.remove(); st.reattach = (st.reattach || 0) + 1; st.abort = null; setSending(false); await new Promise((r) => setTimeout(r, 1200)); return runChat({ attach: true }); } } catch {}
+    try {
+      const c = await api('/conversations/' + st.cur);
+      if (c.running) { if (raf) cancelAnimationFrame(raf); d.remove(); st.reattach = (st.reattach || 0) + 1; st.abort = null; setSending(false); await new Promise((r) => setTimeout(r, 1200)); return runChat({ attach: true }); }
+      attach = true; err = null; acc = ''; // it finished while we were disconnected: show the saved version from the server
+    } catch {}
   }
   // let the typewriter finish so the end doesn't jump
   for (let n = 0; n < 90 && shown < acc.length && !ac.signal.aborted; n++) await new Promise((r) => setTimeout(r, 16));
@@ -911,7 +916,8 @@ async function boot() {
   st.activeSkillId = st.config.defaultSkillId || 0;
   renderStyleOptions(); renderEffort(); updateThinkingPill(); updateSkillPill(); updateApiStatus();
   const noKeys = !st.keys.anthropic && !st.keys.openrouter && !st.keys.custom;
-  createNewChat();
+  const live = st.convs.find((c) => c.running);
+  if (live) await openChat(live.id); else createNewChat();
   if (noKeys) { toast('Add an API key to start (Settings → API & Providers)', 5000); setTimeout(() => openSettingsModal('providers'), 400); }
 }
 paintIcons(); applyTheme(document.documentElement.classList.contains('dark') ? 'dark' : 'light');
@@ -929,4 +935,13 @@ document.addEventListener('DOMContentLoaded', () => {});
   const b = $('#to-bottom');
   b.onclick = () => area.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
   area.addEventListener('scroll', () => b.classList.toggle('off', area.scrollHeight - area.scrollTop - area.clientHeight < 240), { passive: true });
+})();
+
+
+// ---- reconnect when the phone/browser wakes up with a dead connection ----
+(() => {
+  const check = (limit) => { if (st.streaming && st.abort && Date.now() - (st.lastEv || 0) > limit) st.abort.abort(); if (!st.streaming) loadConvs().catch(() => {}); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(20000); });
+  window.addEventListener('online', () => check(5000));
+  setInterval(() => check(60000), 10000);
 })();
