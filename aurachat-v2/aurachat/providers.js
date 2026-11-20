@@ -29,9 +29,21 @@ async function* sseData(resp) {
 }
 
 class NetError extends Error {}
-async function doFetch(url, init, who, base) {
+const sleepAbortable = (ms, signal) => new Promise((res) => { const t = setTimeout(res, ms); signal?.addEventListener?.('abort', () => { clearTimeout(t); res(); }, { once: true }); });
+// Retries rate limits (429/503/529) automatically, honouring "reset after Ns" / Retry-After, so long builds don't die on a burst.
+async function doFetch(url, init, who, base, onWait) {
   try {
-    return await fetch(url, init);
+    for (let attempt = 0; ; attempt++) {
+      const resp = await fetch(url, init);
+      if (![429, 503, 529].includes(resp.status) || attempt >= 7 || init.signal?.aborted) return resp;
+      let secs = parseFloat(resp.headers.get('retry-after') || '') || 0, body = '';
+      try { body = (await resp.clone().text()).slice(0, 400); } catch {}
+      const m = body.match(/(?:reset|retry)[^0-9]{0,20}(\d+(?:\.\d+)?)\s*s/i); if (m) secs = parseFloat(m[1]);
+      if (resp.status === 429 && /quota|billing|credit|insufficient/i.test(body) && !secs) return resp; // not a burst limit: don't loop
+      const wait = Math.min(Math.max(secs + 1, 2 + attempt * 2), 40);
+      onWait?.(Math.round(wait), attempt + 1);
+      await sleepAbortable(wait * 1000, init.signal);
+    }
   } catch (e) {
     if (e.name === 'AbortError') throw e;
     const code = e.cause?.code || e.code || e.message;
@@ -113,7 +125,7 @@ async function* anthropicProtocol({ endpoint, headers, model, system, messages, 
       method: 'POST', signal,
       headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers },
       body: JSON.stringify(body),
-    }, who, base);
+    }, who, base, opts.onWait);
     if (!resp.ok) await failFromResponse(resp, who);
 
     const blocks = {}; let stop = '';
@@ -182,7 +194,7 @@ async function* openaiProtocol({ endpoint, headers, model, system, messages, opt
     method: 'POST', signal,
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(build(withThinking)),
-  }, who, base);
+  }, who, base, opts.onWait);
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     let resp = await send(true);

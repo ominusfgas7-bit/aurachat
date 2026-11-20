@@ -505,7 +505,7 @@ app.post('/api/chat', async (req, res) => {
       toolset = webtools.withWebTools(toolset, process.env.TAVILY_API_KEY || getSetting('tavily_key', ''), { search: wantSearch || skSlug.startsWith('mc-'), paper: true });
       if (modelId.startsWith('custom:')) opts.webSearch = false;
     }
-    const stream = streamModel({ modelId, system: buildSystem(style, skillId, !!toolset), messages: buildMessages(conv.id), opts: { ...opts, toolset }, signal: ac.signal });
+    const stream = streamModel({ modelId, system: buildSystem(style, skillId, !!toolset), messages: buildMessages(conv.id), opts: { ...opts, toolset, onWait: (sec, n) => send({ type: 'status', text: `Rate limited by the provider — retrying in ${sec}s (try ${n})…` }) }, signal: ac.signal });
     for await (const ev of stream) {
       if (ev.t === 'thinking') { thinking += ev.text; send({ type: 'thinking', text: ev.text }); continue; }
       if (ev.t === 'status') { send({ type: 'status', text: ev.text }); continue; }
