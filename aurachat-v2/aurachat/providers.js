@@ -35,12 +35,12 @@ async function doFetch(url, init, who, base, onWait) {
   try {
     for (let attempt = 0; ; attempt++) {
       const resp = await fetch(url, init);
-      if (![429, 503, 529].includes(resp.status) || attempt >= 7 || init.signal?.aborted) return resp;
+      if (![429, 503, 529].includes(resp.status) || attempt >= 20 || init.signal?.aborted) return resp;
       let secs = parseFloat(resp.headers.get('retry-after') || '') || 0, body = '';
       try { body = (await resp.clone().text()).slice(0, 400); } catch {}
       const m = body.match(/(?:reset|retry)[^0-9]{0,20}(\d+(?:\.\d+)?)\s*s/i); if (m) secs = parseFloat(m[1]);
       if (resp.status === 429 && /quota|billing|credit|insufficient/i.test(body) && !secs) return resp; // not a burst limit: don't loop
-      const wait = Math.min(Math.max(secs + 1, 2 + attempt * 2), 40);
+      const wait = Math.min(Math.max(secs + 1, 2 + attempt * 3), 60);
       onWait?.(Math.round(wait), attempt + 1);
       await sleepAbortable(wait * 1000, init.signal);
     }
@@ -107,7 +107,9 @@ async function runTools(ts, calls, signal) {
 async function* anthropicProtocol({ endpoint, headers, model, system, messages, opts, signal, who, base }) {
   const ts = opts.toolset?.defs?.length ? opts.toolset : null;
   const msgs = anthropicMessages(messages);
+  const bump = (s, n) => { opts._gap = Math.min((opts._gap || 1200) + 1500, 8000); opts.onWait?.(s, n); };
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    if (round > 0) await sleepAbortable(opts._gap || 1200, signal); // pace tool rounds so long builds don't trip rate limits
     const body = { model, system, messages: msgs, stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX };
     if (opts.effort && BUDGETS[opts.effort]) {
       const budget = BUDGETS[opts.effort];
@@ -125,7 +127,7 @@ async function* anthropicProtocol({ endpoint, headers, model, system, messages, 
       method: 'POST', signal,
       headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', ...headers },
       body: JSON.stringify(body),
-    }, who, base, opts.onWait);
+    }, who, base, bump);
     if (!resp.ok) await failFromResponse(resp, who);
 
     const blocks = {}; let stop = '';
@@ -175,6 +177,7 @@ async function* openaiProtocol({ endpoint, headers, model, system, messages, opt
   const ts = opts.toolset?.defs?.length ? opts.toolset : null;
   const msgs = [{ role: 'system', content: system }, ...openaiMessages(messages)];
   let useTools = !!ts;
+  const bump = (s, n) => { opts._gap = Math.min((opts._gap || 1200) + 1500, 8000); opts.onWait?.(s, n); };
   const build = (withThinking) => {
     const body = { model, stream: true, max_tokens: opts.maxTokens || DEFAULT_MAX, messages: msgs };
     if (typeof opts.temperature === 'number' && !(withThinking && opts.effort)) body.temperature = opts.temperature;
@@ -194,9 +197,10 @@ async function* openaiProtocol({ endpoint, headers, model, system, messages, opt
     method: 'POST', signal,
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(build(withThinking)),
-  }, who, base, opts.onWait);
+  }, who, base, bump);
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    if (round > 0) await sleepAbortable(opts._gap || 1200, signal);
     let resp = await send(true);
     if (!resp.ok && resp.status === 400 && opts.effort) resp = await send(false); // model rejects thinking params
     if (!resp.ok && resp.status === 400 && useTools) { useTools = false; yield { t: 'status', text: 'This model rejected tools — continuing without connectors' }; resp = await send(!!opts.effort); }
