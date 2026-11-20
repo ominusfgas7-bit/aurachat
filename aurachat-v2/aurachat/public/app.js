@@ -219,6 +219,29 @@ function addRunUI(out, id) {
     catch (e) { live.classList.remove('hidden'); live.innerHTML = `<span class="text-red-600">✗ ${esc(e.message)}</span>`; btn.disabled = false; }
   };
 }
+$('#btn-repo-build').onclick = async () => {
+  const repo = prompt('GitHub repo to build & run (owner/repo):', localStorage.getItem('lastRepo') || ''); if (!repo) return;
+  try { localStorage.setItem('lastRepo', repo); } catch {}
+  const box = document.createElement('div'); box.className = 'filecard mx-auto my-3 max-w-3xl rounded-2xl border border-claude-borderLight dark:border-claude-borderDark';
+  const out = document.createElement('div'); out.className = 'p-3 text-xs'; box.appendChild(out);
+  const host = $('#messages-container'); $('#welcome-screen')?.classList.add('hidden'); host.appendChild(box); box.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  const spin = (t) => { out.innerHTML = `<div class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded-full border-2 border-claude-accent border-t-transparent animate-spin"></span><span class="min-w-0 truncate">${esc(t)}</span></div>`; };
+  try {
+    spin('Fetching ' + repo + '…');
+    const { id, files } = await api('/build/repo', { method: 'POST', body: { repo } });
+    for (let n = 0; n < 900; n++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const j = await api('/build/' + id);
+      if (j.state === 'running') { spin(`${files} files · ` + (j.steps.at(-1) || 'Working…')); continue; }
+      if (j.state === 'done') {
+        const r = j.result, mb = (r.size / 1048576).toFixed(1) + ' MB';
+        out.innerHTML = `<div class="flex items-center gap-3"><span class="flex-1 min-w-0">✓ ${esc(repo)} · Paper ${esc(r.mc || '')} · ${r.plugins || 0} plugins · ${mb}</span><a href="/api/packs/${id}" download class="px-3 py-1.5 rounded-lg bg-claude-accent text-white font-semibold">Download .zip</a></div>`;
+        if (r.kind === 'pack') addRunUI(out, id); return;
+      }
+      out.className += ' font-mono whitespace-pre-wrap text-red-700 dark:text-red-300'; out.textContent = 'Build failed:\n' + (j.log || 'unknown'); return;
+    }
+  } catch (e) { out.textContent = e.message; }
+};
 async function autoBuildLast() {
   const zc = $('#messages-container').lastElementChild?.querySelector?.('.zipcard');
   if (!zc?._buildBtn) return;

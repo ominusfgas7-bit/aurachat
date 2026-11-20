@@ -547,6 +547,36 @@ app.get('/api/build/:id', (req, res) => {
   if (!j) return res.status(404).json({ error: 'Unknown job (server restarted?)' });
   res.json({ state: j.state, steps: j.steps.slice(-4), log: j.log, buildError: !!j.buildError, result: j.result || null });
 });
+// Build a server straight from a GitHub repo (what the AI pushed), then it can be test-run like any pack.
+app.post('/api/build/repo', async (req, res) => {
+  try {
+    const m = String(req.body?.repo || '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '').match(/^([\w.-]+)\/([\w.-]+)$/);
+    if (!m) return res.status(400).json({ error: 'Use owner/repo, e.g. ominusfgas7-bit/duels-server' });
+    const ref = String(req.body?.ref || '').trim().replace(/[^\w./-]/g, '').slice(0, 100);
+    const gh = getConnectors().find((x) => x.token && /github/i.test(x.url + x.name));
+    const headers = { 'user-agent': 'AuraChat', accept: 'application/vnd.github+json' };
+    if (gh) headers.authorization = 'Bearer ' + gh.token.replace(/^bearer /i, '');
+    const r = await fetch(`${process.env.GITHUB_API || 'https://api.github.com'}/repos/${m[1]}/${m[2]}/zipball${ref ? '/' + ref : ''}`, { headers, redirect: 'follow' });
+    if (!r.ok) return res.status(r.status === 404 ? 404 : 502).json({ error: r.status === 404 ? `Repo not found. If it's private, add your GitHub token in Settings → Connectors.` : `GitHub said ${r.status}` });
+    const fs = require('fs'), os = require('os'), path = require('path'), { execFileSync } = require('child_process');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'r.zip'), Buffer.from(await r.arrayBuffer()));
+      execFileSync('unzip', ['-q', '-o', 'r.zip', '-d', 'x'], { cwd: tmp });
+      const root = path.join(tmp, 'x'); const top = fs.readdirSync(root); const base = top.length === 1 ? path.join(root, top[0]) : root;
+      const files = []; let total = 0;
+      const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name); if (e.isSymbolicLink() || e.name === '.git') continue;
+        if (e.isDirectory()) { walk(p); continue; }
+        const st = fs.statSync(p); if (st.size > 1_500_000 || total > 40_000_000) continue;
+        const buf = fs.readFileSync(p); if (buf.includes(0)) continue; total += st.size;
+        files.push({ name: path.relative(base, p), text: buf.toString('utf8') }); } };
+      walk(base);
+      if (!files.length) return res.status(400).json({ error: 'Repo is empty' });
+      res.json({ id: builder.startJob(files, { mode: 'pack', mcVersion: String(req.body?.mcVersion || '').slice(0, 20) }), files: files.length });
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 const runner = require('./runner');
 app.post('/api/server/run', async (req, res) => { try { res.json(await runner.start({ packId: String(req.body?.id || ''), minutes: req.body?.minutes, offline: !!req.body?.offline })); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } });
 app.post('/api/server/stop', (req, res) => res.json(runner.stop()));
